@@ -1,0 +1,9 @@
+# ~/.zshrc: loads ~/.config/zsh/[0-9]*.zsh in numeric order.
+# Fragments come from two stow packages that share this directory:
+#   dotfiles-public/zsh       shareable (00-60, 70, 90+)
+#   dotfiles/zsh-private      personal (80-personal.zsh)
+# Per-machine overrides go in local.zsh, which is in no repo.
+for _zf in ~/.config/zsh/[0-9]*.zsh(N); do source $_zf; done
+unset _zf
+[[ -f ~/.zshrc.local ]] && source ~/.zshrc.local
+[[ -f ~/.config/zsh/local.zsh ]] && source ~/.config/zsh/local.zsh
