@@ -16,3 +16,9 @@ export PATH="$BUN_INSTALL/bin:$PATH"
 
 # --- zsh-autosuggestions (ghost-text from history) ---
 [[ -f /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh ]] && source /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh
+
+# --- HPC environment modules: load the zsh flavour of `module` if the system has one
+#     (exec'd zsh inherits MODULEPATH etc. from bash, but not bash's `module` function) ---
+if (( ! $+functions[module] )) && [[ -n $MODULESHOME && -r $MODULESHOME/init/zsh ]]; then
+  source $MODULESHOME/init/zsh
+fi
