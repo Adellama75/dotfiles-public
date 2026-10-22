@@ -1,3 +1,7 @@
+# --- PATH: ~/.local/bin first, before any fragment checks for tools ---
+# (user-installed starship, eza, ... on HPC systems without root)
+[[ -d ~/.local/bin && ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
+
 # --- start new shells in ~/dev instead of ~ ---
 # Only trigger when launched in $HOME so it doesn't clobber kitty session cwds.
 [[ $PWD == $HOME && -d ~/dev ]] && cd ~/dev

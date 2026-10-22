@@ -1,6 +1,4 @@
 # --- PATH ---
-# ~/.local/bin first: user-installed tools (starship, eza on HPC systems without root)
-[[ -d ~/.local/bin && ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
 export PATH="$HOME/.npm-global/bin:$PATH"
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
