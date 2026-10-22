@@ -1,2 +1,6 @@
 # Keep starship's leading blank line above each prompt — feels less cramped.
 add_newline = true
+
+# Show friendly names for HPC login nodes in the prompt.
+[hostname]
+aliases = { "login8a" = "cosma", "login8b" = "cosma" }
