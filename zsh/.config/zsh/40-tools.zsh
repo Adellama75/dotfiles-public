@@ -1,4 +1,6 @@
 # --- PATH ---
+# ~/.local/bin first: user-installed tools (starship, eza on HPC systems without root)
+[[ -d ~/.local/bin && ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
 export PATH="$HOME/.npm-global/bin:$PATH"
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
@@ -15,7 +17,11 @@ export PATH="$BUN_INSTALL/bin:$PATH"
 [[ -f /usr/share/doc/fzf/examples/key-bindings.zsh ]] && source /usr/share/doc/fzf/examples/key-bindings.zsh
 
 # --- zsh-autosuggestions (ghost-text from history) ---
-[[ -f /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh ]] && source /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh
+# system package, or a git clone in ~/.local/share (no root needed)
+for _p in /usr/share/zsh-autosuggestions ~/.local/share/zsh-autosuggestions; do
+  [[ -f $_p/zsh-autosuggestions.zsh ]] && { source $_p/zsh-autosuggestions.zsh; break; }
+done
+unset _p
 
 # --- HPC environment modules: load the zsh flavour of `module` if the system has one
 #     (exec'd zsh inherits MODULEPATH etc. from bash, but not bash's `module` function) ---

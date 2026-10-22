@@ -1,0 +1,2 @@
+# Keep starship's leading blank line above each prompt — feels less cramped.
+add_newline = true
