@@ -3,4 +3,5 @@ add_newline = true
 
 # Show friendly names for HPC login nodes in the prompt.
 [hostname]
-aliases = { "login8a" = "cosma", "login8b" = "cosma" }
+aliases = { "login8a" = "cosma", "login8b" = "cosma",   # DiRAC COSMA (Durham)
+            "login01" = "cirrus", "login02" = "cirrus", "login03" = "cirrus", "login04" = "cirrus" }   # EPCC Cirrus
