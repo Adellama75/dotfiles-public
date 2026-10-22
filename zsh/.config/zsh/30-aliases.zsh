@@ -57,6 +57,9 @@ open() {
   done
 }
 
-# --- default editor (zed; --wait makes git/crontab block until the buffer closes) ---
-if (( $+commands[zed] )); then export EDITOR="zed --wait"; else export EDITOR=vim; fi
+# --- default editor: zed where installed (--wait makes git/crontab block until the
+#     buffer closes), else nano (servers, HPC), else vim ---
+if (( $+commands[zed] )); then export EDITOR="zed --wait"
+elif (( $+commands[nano] )); then export EDITOR=nano
+else export EDITOR=vim; fi
 export VISUAL="$EDITOR"
