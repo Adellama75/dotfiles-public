@@ -2,6 +2,16 @@
 # see /usr/share/doc/bash/examples/startup-files (in the package bash-doc)
 # for examples
 
+# Environment for every shell, interactive or not (PATH etc.).
+[ -f "$HOME/.config/shell/env.sh" ] && . "$HOME/.config/shell/env.sh"
+
+# Humans get zsh, programs get bash: an interactive shell on a terminal switches to zsh, while
+# `ssh host cmd`, Claude Code and scripts (no tty, or not interactive) stay in bash.
+# `NO_ZSH=1 bash` for a plain bash.
+if [[ $- == *i* ]] && [ -t 0 ] && [ -t 1 ] && [ -z "${BASH_EXECUTION_STRING:-}" ] && [ -z "${ZSH_VERSION:-}" ] && [ -z "${NO_ZSH:-}" ] && command -v zsh >/dev/null; then
+    exec zsh -l
+fi
+
 # If not running interactively, don't do anything
 case $- in
     *i*) ;;

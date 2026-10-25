@@ -1,3 +1,2 @@
-[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
-# Make ~/.local/bin available to non-interactive shells (ssh <host> <cmd>).
-case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac
+# Environment for every zsh, interactive or not (`ssh host cmd` included); shared with bash and sh.
+[ -f "$HOME/.config/shell/env.sh" ] && . "$HOME/.config/shell/env.sh"
