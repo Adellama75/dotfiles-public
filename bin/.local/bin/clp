@@ -1,0 +1,11 @@
+#!/bin/sh
+# clp: copy stdin or file(s) to the clipboard. Detects images and sets the
+# MIME type so they paste as pictures, not bytes.
+tmp=$(mktemp) || exit 1
+trap 'rm -f "$tmp"' EXIT
+if [ -t 0 ]; then cat "$@" > "$tmp"; else cat > "$tmp"; fi
+mime=$(file -b --mime-type "$tmp")
+case "$mime" in
+  image/*) xclip -selection clipboard -t "$mime" -i "$tmp" ;;
+  *)       xclip -selection clipboard -i "$tmp" ;;
+esac

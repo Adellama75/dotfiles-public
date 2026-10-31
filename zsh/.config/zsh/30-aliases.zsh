@@ -33,19 +33,7 @@ alias alert='notify-send --urgency=low -i "$([ $? = 0 ] && echo terminal || echo
 mkcd() { mkdir -p "$1" && cd "$1"; }
 cdls() { cd "$@" && ls; }
 
-# clp: copy stdin or file(s) to the clipboard. Detects images and sets the
-# right xclip target (-t image/png etc.) so pasting into Discord/apps works;
-# falls back to plain text otherwise.
-clp() {
-  local tmp; tmp=$(mktemp)
-  if [ -t 0 ]; then cat "$@" > "$tmp"; else cat > "$tmp"; fi
-  local mime; mime=$(file -b --mime-type "$tmp")
-  case "$mime" in
-    image/*) xclip -selection clipboard -t "$mime" -i "$tmp" ;;
-    *)       xclip -selection clipboard -i "$tmp" ;;
-  esac
-  rm -f "$tmp"
-}
+# clp is a script now (bin/.local/bin/clp) so bash and programs get it too.
 
 # open: launch default app, detach, and swallow its chatter
 # Absolute paths: single-instance apps (sioyek) resolve relative ones in their own cwd
