@@ -1,0 +1,19 @@
+# Core CLI tools (Debian/Ubuntu apt names). Install on a new machine with:
+#   dotfiles-public/packages/install.sh
+# fd and bat are installed as fdfind/batcat here; install.sh adds ~/.local/bin shims.
+bat
+btop
+eza
+fd-find
+fzf
+gh
+git
+git-delta
+htop
+jq
+ncdu
+neovim
+ripgrep
+tmux
+tree
+zoxide
