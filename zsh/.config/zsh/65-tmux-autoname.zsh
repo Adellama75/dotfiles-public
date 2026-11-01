@@ -6,7 +6,7 @@ _tmux_autoname() {
   [[ -n $TMUX ]] || return
   local cur; cur=$(tmux display-message -p '#S' 2>/dev/null)
   [[ $cur == <-> ]] || return            # only default numeric names (zsh: <-> = digits)
-  [[ $PWD == $HOME ]] && return          # don't name from the home dir
+  [[ $PWD == $HOME || $PWD == $HOME/dev ]] && return   # skip home and the ~/dev container
   local root name
   root=$(git rev-parse --show-toplevel 2>/dev/null)
   name=${root:t}                         # basename of the repo root…
