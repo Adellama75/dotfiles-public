@@ -1,3 +1,10 @@
+# --- truecolor inside tmux ---
+# Claude Code clamps to 256 colours whenever it runs inside tmux (a legacy guard,
+# regardless of TERM/COLORTERM/FORCE_COLOR), which desaturates its mascot/theme.
+# Our tmux passes full 24-bit through to kitty, so opt back into truecolor. This is
+# the ONLY lever that works — it's a Claude-Code-specific env var, not a terminal one.
+export CLAUDE_CODE_TMUX_TRUECOLOR=1
+
 # --- AI CLIs ---
 # cc = claude. Only shadows the C compiler at the interactive prompt: aliases
 # never reach make, scripts or `sh -c`, which find /usr/bin/cc via PATH.
