@@ -3,5 +3,6 @@ add_newline = true
 
 # Show friendly names for HPC login nodes in the prompt.
 [hostname]
+ssh_only = false   # show the host on local shells too, so Lavender is distinct from cumin
 aliases = { "login8a" = "cosma", "login8b" = "cosma",   # DiRAC COSMA (Durham)
             "login01" = "cirrus", "login02" = "cirrus", "login03" = "cirrus", "login04" = "cirrus" }   # EPCC Cirrus
