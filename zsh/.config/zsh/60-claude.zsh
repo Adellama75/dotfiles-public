@@ -3,11 +3,7 @@
 # never reach make, scripts or `sh -c`, which find /usr/bin/cc via PATH.
 # Must be defined BEFORE command_not_found_handler below: zsh expands aliases
 # when a function is defined, so a later alias would leave `cc` meaning the compiler.
-if [[ -x $HOME/dev/claude/claude-q-patch ]]; then
-  alias cc="$HOME/dev/claude/claude-q-patch claude --dangerously-skip-permissions"   # bare `q` quits
-else
-  alias cc='claude --dangerously-skip-permissions'
-fi
+alias cc='claude --dangerously-skip-permissions'   # bare `q` quits via ~/.claude/hooks/q-quit.sh
 alias cx='codex --dangerously-bypass-approvals-and-sandbox'
 alias gc='gemini'
 
