@@ -37,6 +37,7 @@ while [ $# -gt 0 ]; do
 done
 here=$(dirname "$(readlink -f "$0")")
 sticky=$HOME/.cache/tmux-sticky
+US=$'\x1f'   # field separator for tmux -F output: tab is IFS whitespace, so an empty field would be swallowed by read
 shell_re='^(zsh|bash|sh|dash|fish)$'
 viewer_re='^(less|more|man|top|htop|btop|vim|nvim|nano)$'
 
@@ -71,9 +72,9 @@ pane_done() {   # $1 pane_pid, $2 command, $3 cwd, $4 title
 
 every_pane() {   # $1 session, $2 predicate (pane_empty | pane_done)
     local pid cmd cwd title
-    while IFS=$'\t' read -r pid cmd cwd title; do
+    while IFS=$US read -r pid cmd cwd title; do
         "$2" "$pid" "$cmd" "$cwd" "$title" || return 1
-    done < <(tmux list-panes -s -t "$1" -F $'#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}')
+    done < <(tmux list-panes -s -t "$1" -F "#{pane_pid}${US}#{pane_current_command}${US}#{pane_current_path}${US}#{pane_title}")
 }
 
 detached_sessions() { tmux list-sessions -F '#{session_id}' -f '#{==:#{session_attached},0}' 2>/dev/null; }
@@ -95,10 +96,10 @@ closed)
     every_pane "$s" pane_done && kill_session "$s" "window closed, done" ;;
 sweep)
     now=$(date +%s)
-    while IFS=$'\t' read -r s last created; do
-        [ "${last:-0}" -gt "$created" ] || last=$created
-        [ $(( now - last )) -ge 86400 ] || continue
+    while IFS=$US read -r s last created; do
+        [ "${last:-0}" -gt "${created:-0}" ] || last=$created      # never attached: age from creation
+        [ -n "$last" ] && [ $(( now - last )) -ge 86400 ] || continue
         every_pane "$s" pane_done && kill_session "$s" "detached >24h, done"
-    done < <(tmux list-sessions -F $'#{session_id}\t#{session_last_attached}\t#{session_created}' -f '#{==:#{session_attached},0}' 2>/dev/null) ;;
+    done < <(tmux list-sessions -F "#{session_id}${US}#{session_last_attached}${US}#{session_created}" -f '#{==:#{session_attached},0}' 2>/dev/null) ;;
 esac
 exit 0
