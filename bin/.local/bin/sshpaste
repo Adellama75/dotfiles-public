@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+# sshpaste: paste the local clipboard image into a prompt running on a remote
+# host over ssh (e.g. Claude Code inside tmux on a home server).
+#
+#   sshpaste [-f FILE] [-t TMUX_TARGET] [-T] [-k] [-n] [HOST]
+#
+# What happens:
+#   1. grab the image on the clipboard (xclip on X11, wl-paste on Wayland),
+#      or a copied file (text/uri-list), or FILE if -f is given
+#   2. upload it in one ssh call to HOST:~/.cache/sshpaste/<timestamp>.<ext>
+#   3. type the remote path into the tmux pane you are looking at
+#      (tmux send-keys, no Enter), so you just add a message and hit Enter;
+#      Claude Code then reads the image from that path
+#
+# HOST is, in order: the argument, the host of the `ssh ...` running in the
+# current/focused kitty window (kitty remote control), or $SSHPASTE_HOST.
+# Suggested kitty binding:  map ctrl+alt+v launch --type=background --copy-env sshpaste
+#
+# Which tmux pane: the client attached over *this* ssh connection (matched
+# by SSH_CONNECTION port), else the most recently used client, else -t.
+# With -T, or when no tmux client is found, the remote path is put on the
+# local clipboard instead so you can paste it with ctrl+shift+v.
+#
+#   -f FILE    upload FILE instead of the clipboard
+#   -t TARGET  tmux target (session, session:window, or pane id) to type into
+#   -T         don't touch tmux; copy the remote path to the local clipboard
+#   -k         press Enter after typing the path
+#   -n         dry run: show which host and tmux pane would be used, upload nothing
+set -euo pipefail
+
+usage() { sed -n '2,/^set -e/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+
+file= target= notmux= enter= dry=
+while getopts ':f:t:Tknh' o; do
+  case $o in
+    f) file=$OPTARG ;;
+    t) target=$OPTARG ;;
+    T) notmux=1 ;;
+    k) enter=1 ;;
+    n) dry=1 ;;
+    h) usage ;;
+    *) usage 2 ;;
+  esac
+done
+shift $((OPTIND - 1))
+host=${1:-}
+
+# When launched from a kitty keybinding there is no terminal: use a
+# desktop notification for errors and results instead.
+say() { printf '%s\n' "$*" >&2; [ -t 2 ] || notify-send -a sshpaste "$*" 2>/dev/null || true; }
+die() { say "sshpaste: $*"; exit 1; }
+
+tmp=$(mktemp -t sshpaste.XXXXXX)
+trap 'rm -f "$tmp"' EXIT
+
+# ---- 1. get the image -------------------------------------------------------
+ext_for() {
+  case $1 in
+    image/png) echo png ;; image/jpeg) echo jpg ;; image/gif) echo gif ;;
+    image/webp) echo webp ;; image/bmp) echo bmp ;; image/svg+xml) echo svg ;;
+    image/tiff) echo tiff ;; *) echo "${2##*.}" ;;
+  esac
+}
+
+clip_targets() {
+  if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v wl-paste >/dev/null; then wl-paste -l
+  else xclip -selection clipboard -o -t TARGETS; fi 2>/dev/null
+}
+clip_get() { # mime
+  if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v wl-paste >/dev/null; then wl-paste -t "$1"
+  else xclip -selection clipboard -o -t "$1"; fi
+}
+
+if [ -n "$file" ]; then
+  [ -r "$file" ] || die "cannot read $file"
+  cat "$file" > "$tmp"
+  mime=$(file -b --mime-type "$tmp"); ext=$(ext_for "$mime" "$file")
+else
+  targets=$(clip_targets || true)
+  mime=$(grep -m1 -x 'image/png' <<<"$targets" || grep -m1 '^image/' <<<"$targets" || true)
+  if [ -n "$mime" ]; then
+    clip_get "$mime" > "$tmp"; ext=$(ext_for "$mime" x.bin)
+  elif grep -qx 'text/uri-list' <<<"$targets"; then
+    uri=$(clip_get text/uri-list | grep -m1 '^file://' || true)
+    [ -n "$uri" ] || die "clipboard has a URI list but no local file"
+    src=$(python3 -Ic 'import sys,urllib.parse; print(urllib.parse.unquote(urllib.parse.urlparse(sys.argv[1]).path))' "$uri")
+    [ -r "$src" ] || die "cannot read $src"
+    cat "$src" > "$tmp"; mime=$(file -b --mime-type "$tmp"); ext=$(ext_for "$mime" "$src")
+  else
+    die "no image on the clipboard (targets: $(tr '\n' ' ' <<<"$targets"))"
+  fi
+fi
+[ -s "$tmp" ] || die "clipboard image is empty"
+
+# ---- 2. find the host (and the ssh process, to match the tmux client) -------
+# Python helper: read `kitten @ ls` JSON and print "HOST PID" for the ssh
+# command running in our kitty window (KITTY_WINDOW_ID), else the focused one.
+kitty_ssh_py=$(cat <<'PY'
+import json, os, sys
+# ssh options that take a value (so the next word is not the host)
+WITH_ARG = set("BbcDEeFIiJLlmOopQRSWw")
+def host_of(argv):
+    i = 1
+    if argv and argv[0].endswith("kitten"):
+        if len(argv) < 2 or argv[1] != "ssh": return None
+        i = 2
+    elif not argv or not argv[0].endswith("ssh"): return None
+    while i < len(argv):
+        a = argv[i]
+        if a == "--": return argv[i+1] if i+1 < len(argv) else None
+        if a.startswith("-"):
+            if len(a) == 2 and a[1] in WITH_ARG: i += 1
+            i += 1; continue
+        return a
+    return None
+def ssh_in(w):
+    for p in w.get("foreground_processes", []):
+        h = host_of(p.get("cmdline") or [])
+        if h: return h, p.get("pid", "")
+tree = json.load(sys.stdin)
+wins = [w for osw in tree for tab in osw["tabs"] for w in tab["windows"]]
+mine = [w for w in wins if str(w.get("id")) == os.environ.get("KITTY_WINDOW_ID", "")]
+focused = [w for osw in tree if osw.get("is_focused") for tab in osw["tabs"] if tab.get("is_focused")
+           for w in tab["windows"] if w.get("is_focused")]
+for w in mine + focused:
+    r = ssh_in(w)
+    if r: print(*r); sys.exit()
+PY
+)
+ssh_pid=
+if [ -z "$host" ] && command -v kitten >/dev/null; then
+  # A `launch --type=background` from a keybinding has no tty, so kitten needs
+  # the control socket: from the env (use --copy-env in the mapping), else the
+  # newest listen_on socket in /tmp.
+  sock=${KITTY_LISTEN_ON:-}
+  if [ -z "$sock" ]; then
+    for f in $(ls -t "${TMPDIR:-/tmp}"/kitty* 2>/dev/null); do
+      [ -S "$f" ] && kitten @ --to "unix:$f" ls >/dev/null 2>&1 && { sock=unix:$f; break; }
+    done
+  fi
+  if [ -n "$sock" ]; then
+    read -r host ssh_pid <<<"$(kitten @ --to "$sock" ls 2>/dev/null | python3 -I -c "$kitty_ssh_py" 2>/dev/null || true)"
+  fi
+fi
+host=${host:-${SSHPASTE_HOST:-}}
+[ -n "$host" ] || die "no host: pass one, or set SSHPASTE_HOST, or run from a kitty window that is ssh'd somewhere"
+
+# Local port of that ssh connection, so the remote side can find the tmux
+# client that was attached through it (its SSH_CONNECTION carries the port).
+port=
+if [ -n "$ssh_pid" ] && command -v ss >/dev/null; then
+  port=$(ss -Htnp 2>/dev/null | awk -v p="pid=$ssh_pid," '$0 ~ p && $1=="ESTAB" {sub(/.*:/,"",$4); print $4; exit}' || true)
+fi
+
+# ---- 3. upload + type the path in one ssh round trip ------------------------
+name=$(date +%Y%m%d-%H%M%S)-$$.$ext
+q() { printf "'%s'" "${1//\'/\'\\\'\'}"; }   # single-quote for the remote shell
+remote_script=$(cat <<'REMOTE'
+d="$HOME/.cache/sshpaste"; f="$d/$NAME"
+if [ -z "$DRY" ]; then mkdir -p "$d"; cat > "$f"; fi
+[ -n "$NOTMUX" ] && { echo "PATH $f"; exit 0; }
+t=$TARGET
+if [ -z "$t" ]; then
+  first=
+  while read -r act pid sess; do
+    [ -n "$first" ] || first=$sess
+    if [ -n "$PORT" ] && tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null \
+         | grep -q "^SSH_CONNECTION=[^ ]* $PORT "; then t=$sess; break; fi
+  done < <(tmux list-clients -F '#{client_activity} #{client_pid} #{client_session}' 2>/dev/null | sort -rn)
+  t=${t:-$first}
+fi
+[ -n "$DRY" ] && { echo "DRY ${t:-<none>}"; exit 0; }
+if [ -n "$t" ] && tmux send-keys -t "$t" -l "$f " 2>/dev/null; then
+  [ -n "$ENTER" ] && tmux send-keys -t "$t" Enter
+  echo "SENT $t $f"
+else
+  echo "PATH $f"
+fi
+REMOTE
+)
+result=$(ssh "$host" "NAME=$(q "$name") TARGET=$(q "$target") NOTMUX=$(q "$notmux") ENTER=$(q "$enter") PORT=$(q "$port") DRY=$(q "$dry") bash -c $(q "$remote_script")" < "$tmp") \
+  || die "ssh to $host failed"
+
+# ---- 4. report ---------------------------------------------------------------
+read -r what rest <<<"$result"
+case $what in
+  DRY)  say "dry run: host=$host ssh_pid=${ssh_pid:-?} port=${port:-?} tmux target=$rest" ;;
+  SENT) say "pasted to $host tmux ${rest%% *}: ${rest#* }" ;;
+  PATH)
+    if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v wl-copy >/dev/null; then printf '%s' "$rest" | wl-copy
+    else printf '%s' "$rest" | xclip -selection clipboard -i; fi
+    say "uploaded to $host:$rest (path copied to clipboard; no tmux client found)" ;;
+  *) die "unexpected reply from $host: $result" ;;
+esac
