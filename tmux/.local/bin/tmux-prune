@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# tmux-prune — kill tmux sessions that are detached AND idle (every pane is a
+# bare shell with no child processes). Anything running — claude, ssh, vim, a
+# backgrounded job — keeps its session alive, attached or not.
+#
+# Why: each kitty window is its own session on cumin, and closing the window
+# only DETACHES. Without this, empty "battlecode-16"-style sessions pile up.
+# Runs from the client-detached hook in .tmux.conf; also fine to run by hand
+# (tmux-prune -n = dry run, just list what would go).
+set -u
+dry=; [ "${1:-}" = -n ] && dry=1
+sleep 0.3   # when run from the hook, let tmux finish bookkeeping the detach
+
+tmux list-sessions -F '#{session_name} #{session_attached}' 2>/dev/null |
+while read -r name attached; do
+    [ "$attached" = 0 ] || continue
+    idle=1
+    while read -r pid cmd; do
+        case "$cmd" in zsh|bash|sh|fish) ;; *) idle=; break ;; esac
+        pgrep -P "$pid" >/dev/null && { idle=; break; }
+    done < <(tmux list-panes -s -t "=$name" -F '#{pane_pid} #{pane_current_command}')
+    [ -n "$idle" ] || continue
+    if [ -n "$dry" ]; then echo "would kill $name"
+    else tmux kill-session -t "=$name" && echo "pruned idle session $name"; fi
+done
