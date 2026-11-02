@@ -39,8 +39,11 @@ target=$(cat "$dir/$id" 2>/dev/null)
 if ! alive "$target"; then
     target=
     if [ -n "$want" ]; then
-        case "$want" in \$*) t=$want ;; *) t="=$want" ;; esac   # = : exact name match
-        target=$(tmux display-message -p -t "$t" '#{session_id}' 2>/dev/null)
+        case "$want" in
+            \$*) target=$want ;;                                   # already an id
+            *)   target=$(tmux list-sessions -F '#{session_id}' \
+                          -f "#{==:#{session_name},$want}" 2>/dev/null | head -1) ;;
+        esac
         alive "$target" || target=
     fi
 fi
