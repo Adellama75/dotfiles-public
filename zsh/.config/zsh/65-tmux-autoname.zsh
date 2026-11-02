@@ -14,7 +14,9 @@ _tmux_autoname() {
   [[ -z $name ]] && return
   name=${name//[.: ]/_}                  # tmux dislikes . : and spaces in names
   if tmux has-session -t "=$name" 2>/dev/null; then
-    name="${name}-${cur}"                # avoid clashing with an existing session
+    local i=2                            # clash: first free small number, battlecode-2, -3, …
+    while tmux has-session -t "=${name}-${i}" 2>/dev/null; do (( i++ )); done
+    name="${name}-${i}"
   fi
   tmux rename-session -- "$name" 2>/dev/null
 }

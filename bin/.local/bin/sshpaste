@@ -2,7 +2,7 @@
 # sshpaste: paste the local clipboard image into a prompt running on a remote
 # host over ssh (e.g. Claude Code inside tmux on a home server).
 #
-#   sshpaste [-f FILE] [-t TMUX_TARGET] [-T] [-k] [-n] [HOST]
+#   sshpaste [-f FILE] [-t TMUX_TARGET] [-T] [-k] [-n] [-p] [HOST]
 #
 # What happens:
 #   1. grab the image on the clipboard (xclip on X11, wl-paste on Wayland),
@@ -14,7 +14,9 @@
 #
 # HOST is, in order: the argument, the host of the `ssh ...` running in the
 # current/focused kitty window (kitty remote control), or $SSHPASTE_HOST.
-# Suggested kitty binding:  map ctrl+alt+v launch --type=background --copy-env sshpaste
+# Suggested kitty bindings:
+#   map ctrl+alt+v launch --type=background --copy-env sshpaste
+#   mouse_map middle release ungrabbed,grabbed launch --type=background --copy-env sshpaste -p
 #
 # Which tmux pane: the client attached over *this* ssh connection (matched
 # by SSH_CONNECTION port), else the most recently used client, else -t.
@@ -26,18 +28,22 @@
 #   -T         don't touch tmux; copy the remote path to the local clipboard
 #   -k         press Enter after typing the path
 #   -n         dry run: show which host and tmux pane would be used, upload nothing
+#   -p         middle-click mode: only upload when the kitty window is ssh'd
+#              somewhere AND the clipboard holds an image; otherwise do kitty's
+#              normal paste_from_selection, so middle click keeps pasting text
 set -euo pipefail
 
 usage() { sed -n '2,/^set -e/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
-file= target= notmux= enter= dry=
-while getopts ':f:t:Tknh' o; do
+file= target= notmux= enter= dry= pointer=
+while getopts ':f:t:Tknph' o; do
   case $o in
     f) file=$OPTARG ;;
     t) target=$OPTARG ;;
     T) notmux=1 ;;
     k) enter=1 ;;
     n) dry=1 ;;
+    p) pointer=1 ;;
     h) usage ;;
     *) usage 2 ;;
   esac
@@ -45,54 +51,15 @@ done
 shift $((OPTIND - 1))
 host=${1:-}
 
-# When launched from a kitty keybinding there is no terminal: use a
-# desktop notification for errors and results instead.
+# When launched from a kitty keybinding there is no terminal: also raise a
+# desktop notification for errors and results.
 say() { printf '%s\n' "$*" >&2; [ -t 2 ] || notify-send -a sshpaste "$*" 2>/dev/null || true; }
 die() { say "sshpaste: $*"; exit 1; }
 
 tmp=$(mktemp -t sshpaste.XXXXXX)
 trap 'rm -f "$tmp"' EXIT
 
-# ---- 1. get the image -------------------------------------------------------
-ext_for() {
-  case $1 in
-    image/png) echo png ;; image/jpeg) echo jpg ;; image/gif) echo gif ;;
-    image/webp) echo webp ;; image/bmp) echo bmp ;; image/svg+xml) echo svg ;;
-    image/tiff) echo tiff ;; *) echo "${2##*.}" ;;
-  esac
-}
-
-clip_targets() {
-  if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v wl-paste >/dev/null; then wl-paste -l
-  else xclip -selection clipboard -o -t TARGETS; fi 2>/dev/null
-}
-clip_get() { # mime
-  if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v wl-paste >/dev/null; then wl-paste -t "$1"
-  else xclip -selection clipboard -o -t "$1"; fi
-}
-
-if [ -n "$file" ]; then
-  [ -r "$file" ] || die "cannot read $file"
-  cat "$file" > "$tmp"
-  mime=$(file -b --mime-type "$tmp"); ext=$(ext_for "$mime" "$file")
-else
-  targets=$(clip_targets || true)
-  mime=$(grep -m1 -x 'image/png' <<<"$targets" || grep -m1 '^image/' <<<"$targets" || true)
-  if [ -n "$mime" ]; then
-    clip_get "$mime" > "$tmp"; ext=$(ext_for "$mime" x.bin)
-  elif grep -qx 'text/uri-list' <<<"$targets"; then
-    uri=$(clip_get text/uri-list | grep -m1 '^file://' || true)
-    [ -n "$uri" ] || die "clipboard has a URI list but no local file"
-    src=$(python3 -Ic 'import sys,urllib.parse; print(urllib.parse.unquote(urllib.parse.urlparse(sys.argv[1]).path))' "$uri")
-    [ -r "$src" ] || die "cannot read $src"
-    cat "$src" > "$tmp"; mime=$(file -b --mime-type "$tmp"); ext=$(ext_for "$mime" "$src")
-  else
-    die "no image on the clipboard (targets: $(tr '\n' ' ' <<<"$targets"))"
-  fi
-fi
-[ -s "$tmp" ] || die "clipboard image is empty"
-
-# ---- 2. find the host (and the ssh process, to match the tmux client) -------
+# ---- 1. kitty: which host is this window ssh'd to? --------------------------
 # Python helper: read `kitten @ ls` JSON and print "HOST PID" for the ssh
 # command running in our kitty window (KITTY_WINDOW_ID), else the focused one.
 kitty_ssh_py=$(cat <<'PY'
@@ -127,8 +94,8 @@ for w in mine + focused:
     if r: print(*r); sys.exit()
 PY
 )
-ssh_pid=
-if [ -z "$host" ] && command -v kitten >/dev/null; then
+ssh_pid= sock=
+if command -v kitten >/dev/null; then
   # A `launch --type=background` from a keybinding has no tty, so kitten needs
   # the control socket: from the env (use --copy-env in the mapping), else the
   # newest listen_on socket in /tmp.
@@ -138,10 +105,61 @@ if [ -z "$host" ] && command -v kitten >/dev/null; then
       [ -S "$f" ] && kitten @ --to "unix:$f" ls >/dev/null 2>&1 && { sock=unix:$f; break; }
     done
   fi
-  if [ -n "$sock" ]; then
+  if [ -z "$host" ] && [ -n "$sock" ]; then
     read -r host ssh_pid <<<"$(kitten @ --to "$sock" ls 2>/dev/null | python3 -I -c "$kitty_ssh_py" 2>/dev/null || true)"
   fi
 fi
+
+# -p fallback: behave like a plain middle click in the active kitty window.
+paste_selection() {
+  [ -n "$sock" ] || die "-p needs kitty remote control (no socket found)"
+  if [ -n "$dry" ]; then say "dry run: would paste_from_selection in the active kitty window ($1)"; exit 0; fi
+  exec kitten @ --to "$sock" action paste_from_selection
+}
+if [ -n "$pointer" ] && [ -z "$host" ]; then paste_selection "window is not ssh'd anywhere"; fi
+
+# ---- 2. get the image -------------------------------------------------------
+ext_for() {
+  case $1 in
+    image/png) echo png ;; image/jpeg) echo jpg ;; image/gif) echo gif ;;
+    image/webp) echo webp ;; image/bmp) echo bmp ;; image/svg+xml) echo svg ;;
+    image/tiff) echo tiff ;; *) echo "${2##*.}" ;;
+  esac
+}
+
+clip_targets() {
+  if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v wl-paste >/dev/null; then wl-paste -l
+  else xclip -selection clipboard -o -t TARGETS; fi 2>/dev/null
+}
+clip_get() { # mime
+  if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v wl-paste >/dev/null; then wl-paste -t "$1"
+  else xclip -selection clipboard -o -t "$1"; fi
+}
+
+if [ -n "$file" ]; then
+  [ -r "$file" ] || die "cannot read $file"
+  cat "$file" > "$tmp"
+  mime=$(file -b --mime-type "$tmp"); ext=$(ext_for "$mime" "$file")
+else
+  targets=$(clip_targets || true)
+  mime=$(grep -m1 -x 'image/png' <<<"$targets" || grep -m1 '^image/' <<<"$targets" || true)
+  if [ -n "$mime" ]; then
+    clip_get "$mime" > "$tmp"; ext=$(ext_for "$mime" x.bin)
+  elif grep -qx 'text/uri-list' <<<"$targets"; then
+    uri=$(clip_get text/uri-list | grep -m1 '^file://' || true)
+    [ -n "$uri" ] || die "clipboard has a URI list but no local file"
+    src=$(python3 -Ic 'import sys,urllib.parse; print(urllib.parse.unquote(urllib.parse.urlparse(sys.argv[1]).path))' "$uri")
+    [ -r "$src" ] || die "cannot read $src"
+    cat "$src" > "$tmp"; mime=$(file -b --mime-type "$tmp"); ext=$(ext_for "$mime" "$src")
+  elif [ -n "$pointer" ]; then
+    paste_selection "no image on the clipboard"
+  else
+    die "no image on the clipboard (targets: $(tr '\n' ' ' <<<"$targets"))"
+  fi
+fi
+[ -s "$tmp" ] || die "clipboard image is empty"
+
+# ---- 3. host + the ssh connection's local port ------------------------------
 host=${host:-${SSHPASTE_HOST:-}}
 [ -n "$host" ] || die "no host: pass one, or set SSHPASTE_HOST, or run from a kitty window that is ssh'd somewhere"
 
@@ -152,7 +170,7 @@ if [ -n "$ssh_pid" ] && command -v ss >/dev/null; then
   port=$(ss -Htnp 2>/dev/null | awk -v p="pid=$ssh_pid," '$0 ~ p && $1=="ESTAB" {sub(/.*:/,"",$4); print $4; exit}' || true)
 fi
 
-# ---- 3. upload + type the path in one ssh round trip ------------------------
+# ---- 4. upload + type the path in one ssh round trip ------------------------
 name=$(date +%Y%m%d-%H%M%S)-$$.$ext
 q() { printf "'%s'" "${1//\'/\'\\\'\'}"; }   # single-quote for the remote shell
 remote_script=$(cat <<'REMOTE'
@@ -181,7 +199,7 @@ REMOTE
 result=$(ssh "$host" "NAME=$(q "$name") TARGET=$(q "$target") NOTMUX=$(q "$notmux") ENTER=$(q "$enter") PORT=$(q "$port") DRY=$(q "$dry") bash -c $(q "$remote_script")" < "$tmp") \
   || die "ssh to $host failed"
 
-# ---- 4. report ---------------------------------------------------------------
+# ---- 5. report ---------------------------------------------------------------
 read -r what rest <<<"$result"
 case $what in
   DRY)  say "dry run: host=$host ssh_pid=${ssh_pid:-?} port=${port:-?} tmux target=$rest" ;;
