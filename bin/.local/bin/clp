@@ -8,6 +8,8 @@ trap 'rm -f "$tmp"' EXIT
 if [ -t 0 ]; then cat "$@" > "$tmp"; else cat > "$tmp"; fi
 mime=$(file -b --mime-type "$tmp")
 
+# Over ssh into a machine with its own X session, use that session's display.
+[ -z "$DISPLAY" ] && [ -S /tmp/.X11-unix/X0 ] && export DISPLAY=:0
 if [ -n "$DISPLAY" ] && command -v xclip >/dev/null 2>&1; then
   case "$mime" in
     image/*) xclip -selection clipboard -t "$mime" -i "$tmp" ;;
@@ -19,6 +21,7 @@ fi
 case "$mime" in
   image/*) echo "clp: no X display; OSC 52 can't carry images" >&2; exit 1 ;;
 esac
+{ : > /dev/tty; } 2>/dev/null || { echo "clp: no X display and no terminal for OSC 52" >&2; exit 1; }
 b64=$(base64 < "$tmp" | tr -d '\n')
 if [ -n "$TMUX" ]; then
   # tmux passthrough (needs allow-passthrough on, set in dotfiles' tmux.conf)
