@@ -1,11 +1,28 @@
 #!/bin/sh
 # clp: copy stdin or file(s) to the clipboard. Detects images and sets the
 # MIME type so they paste as pictures, not bytes.
+# With no X display (e.g. over ssh), falls back to OSC 52 so the terminal
+# (kitty) puts the text on the local machine's clipboard. OSC 52 is text only.
 tmp=$(mktemp) || exit 1
 trap 'rm -f "$tmp"' EXIT
 if [ -t 0 ]; then cat "$@" > "$tmp"; else cat > "$tmp"; fi
 mime=$(file -b --mime-type "$tmp")
+
+if [ -n "$DISPLAY" ] && command -v xclip >/dev/null 2>&1; then
+  case "$mime" in
+    image/*) xclip -selection clipboard -t "$mime" -i "$tmp" ;;
+    *)       xclip -selection clipboard -i "$tmp" ;;
+  esac
+  exit
+fi
+
 case "$mime" in
-  image/*) xclip -selection clipboard -t "$mime" -i "$tmp" ;;
-  *)       xclip -selection clipboard -i "$tmp" ;;
+  image/*) echo "clp: no X display; OSC 52 can't carry images" >&2; exit 1 ;;
 esac
+b64=$(base64 < "$tmp" | tr -d '\n')
+if [ -n "$TMUX" ]; then
+  # tmux passthrough (needs allow-passthrough on, set in dotfiles' tmux.conf)
+  printf '\033Ptmux;\033\033]52;c;%s\a\033\\' "$b64" > /dev/tty
+else
+  printf '\033]52;c;%s\a' "$b64" > /dev/tty
+fi

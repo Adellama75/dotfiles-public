@@ -3,7 +3,7 @@
 The shareable half of my dotfiles (kitty, tmux, bat, mpv, X11, bash/zsh startup, npm,
 a `claude` package (Claude Code hooks: bare `q` quits, see `claude/.claude/hooks/`),
 a `termux` package (Catppuccin Mocha palette for the Termux app, matching the kitty theme),
-and a `bin` package of small scripts: `clp` copies files/stdin to the clipboard,
+and a `bin` package of small scripts: `clp` copies files/stdin to the clipboard (xclip, or OSC 52 over ssh with no display),
 `sshpaste` pastes a clipboard image into a Claude Code prompt running over ssh+tmux).
 Personal config lives in a separate private repo.
 
