@@ -1,25 +1,104 @@
 #!/usr/bin/env bash
-# tmux-prune — kill tmux sessions that are detached AND idle (every pane is a
-# bare shell with no child processes). Anything running — claude, ssh, vim, a
-# backgrounded job — keeps its session alive, attached or not.
+# tmux-prune — close tmux sessions you are done with. Three triggers:
 #
-# Why: each kitty window is its own session on cumin, and closing the window
-# only DETACHES. Without this, empty "battlecode-16"-style sessions pile up.
-# Runs from the client-detached hook in .tmux.conf; also fine to run by hand
-# (tmux-prune -n = dry run, just list what would go).
+#   tmux-prune                client-detached hook: kill sessions that are
+#                             detached AND empty (every pane a bare shell with
+#                             nothing running). Fires on connection drops too,
+#                             so it never touches anything that is running.
+#   tmux-prune --closed <id>  cumin-shell, when its kitty window is closed on
+#                             purpose: kill the session that window was on if
+#                             it is DONE (below). A dropped connection is not a
+#                             close — that window reconnects instead.
+#   tmux-prune --sweep        hourly timer: kill DONE sessions nobody has been
+#                             attached to for 24h — windows that went away
+#                             without a close signal (laptop crash, kitty killed).
+#   -n with any of them: dry run, just say what would go.
+#
+# A session is DONE when every pane is one of:
+#   - a bare shell with no child processes
+#   - an interactive viewer/editor you only ever close on purpose:
+#     less more man top htop btop vim nvim nano
+#   - claude waiting for input: title starts with ✳ (not a working glyph),
+#     no shell running under it (Bash tool, Monitor, background task), and no
+#     pending /loop wakeup or in-session cron (claude-session-info). Nothing is
+#     lost: `claude -c` / --resume brings the conversation back, and
+#     claude-resurrect restores it after a reboot.
+# Anything else — a job, a server, ssh, a running monitor — keeps its session.
 set -u
-dry=; [ "${1:-}" = -n ] && dry=1
-sleep 0.3   # when run from the hook, let tmux finish bookkeeping the detach
-
-tmux list-sessions -F '#{session_name} #{session_attached}' 2>/dev/null |
-while read -r name attached; do
-    [ "$attached" = 0 ] || continue
-    idle=1
-    while read -r pid cmd; do
-        case "$cmd" in zsh|bash|sh|fish) ;; *) idle=; break ;; esac
-        pgrep -P "$pid" >/dev/null && { idle=; break; }
-    done < <(tmux list-panes -s -t "=$name" -F '#{pane_pid} #{pane_current_command}')
-    [ -n "$idle" ] || continue
-    if [ -n "$dry" ]; then echo "would kill $name"
-    else tmux kill-session -t "=$name" && echo "pruned idle session $name"; fi
+dry= mode=detached cid=
+while [ $# -gt 0 ]; do
+    case $1 in
+        -n) dry=1 ;;
+        --closed) mode=closed; cid=${2:?client id}; shift ;;
+        --sweep) mode=sweep ;;
+        *) echo "usage: tmux-prune [-n] [--closed <client id> | --sweep]" >&2; exit 2 ;;
+    esac
+    shift
 done
+here=$(dirname "$(readlink -f "$0")")
+sticky=$HOME/.cache/tmux-sticky
+shell_re='^(zsh|bash|sh|dash|fish)$'
+viewer_re='^(less|more|man|top|htop|btop|vim|nvim|nano)$'
+
+kill_session() {   # $1 session, $2 reason
+    local name; name=$(tmux display -p -t "$1" '#S' 2>/dev/null) || return
+    if [ -n "$dry" ]; then echo "would kill $name ($2)"
+    else tmux kill-session -t "$1" && echo "pruned $name ($2)"; fi
+}
+
+# the claude process in a pane: pane_pid is usually the shell that launched it
+claude_pid() {
+    [ "$(ps -o comm= -p "$1" 2>/dev/null)" = claude ] && { echo "$1"; return; }
+    { pgrep -P "$1" -x claude; pgrep -P "$1"; } | head -1 | grep .
+}
+
+pane_empty() {   # $1 pane_pid, $2 pane_current_command: bare shell, nothing under it
+    [[ $2 =~ $shell_re ]] && ! pgrep -P "$1" >/dev/null
+}
+
+pane_done() {   # $1 pane_pid, $2 command, $3 cwd, $4 title
+    pane_empty "$1" "$2" && return 0
+    [[ $2 =~ $viewer_re ]] && return 0
+    if [ "$2" = claude ]; then
+        [[ $4 == ✳* ]] || return 1                                 # working
+        local cpid; cpid=$(claude_pid "$1") || return 1
+        ps -o comm= --ppid "$cpid" 2>/dev/null | grep -qE "$shell_re" && return 1   # tool / Monitor running
+        local info; info=$("$here/claude-session-info" "$3" "$4" 2>/dev/null) || return 0   # no conversation yet
+        [ "${info##*	}" = 0 ]; return
+    fi
+    return 1
+}
+
+every_pane() {   # $1 session, $2 predicate (pane_empty | pane_done)
+    local pid cmd cwd title
+    while IFS=$'\t' read -r pid cmd cwd title; do
+        "$2" "$pid" "$cmd" "$cwd" "$title" || return 1
+    done < <(tmux list-panes -s -t "$1" -F $'#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}')
+}
+
+detached_sessions() { tmux list-sessions -F '#{session_id}' -f '#{==:#{session_attached},0}' 2>/dev/null; }
+
+case $mode in
+detached)
+    sleep 0.3   # from the hook: let tmux finish bookkeeping the detach
+    for s in $(detached_sessions); do
+        every_pane "$s" pane_empty && kill_session "$s" "empty"
+    done ;;
+closed)
+    s=$(cat "${sticky:?}/${cid:?}" 2>/dev/null) || exit 0
+    rm -f "${sticky:?}/${cid:?}"
+    tmux has-session -t "$s" 2>/dev/null || exit 0
+    for _ in 1 2 3; do   # the closing client may still be detaching
+        [ "$(tmux display -p -t "$s" '#{session_attached}')" = 0 ] && break; sleep 1
+    done
+    [ "$(tmux display -p -t "$s" '#{session_attached}')" = 0 ] || exit 0   # another window is on it
+    every_pane "$s" pane_done && kill_session "$s" "window closed, done" ;;
+sweep)
+    now=$(date +%s)
+    while IFS=$'\t' read -r s last created; do
+        [ "${last:-0}" -gt "$created" ] || last=$created
+        [ $(( now - last )) -ge 86400 ] || continue
+        every_pane "$s" pane_done && kill_session "$s" "detached >24h, done"
+    done < <(tmux list-sessions -F $'#{session_id}\t#{session_last_attached}\t#{session_created}' -f '#{==:#{session_attached},0}' 2>/dev/null) ;;
+esac
+exit 0

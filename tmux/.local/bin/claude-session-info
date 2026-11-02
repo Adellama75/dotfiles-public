@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+"""claude-session-info CWD TITLE  ->  prints "<conversation-id>\t<busy>"
+
+Finds the Claude Code conversation a tmux pane is running. The pane title is
+the conversation's aiTitle behind an activity glyph ("✳ Fix the build"); match
+it against the aiTitle recorded in ~/.claude/projects/<cwd>/<id>.jsonl (same
+trick as kitty-save-session.sh on lavender).
+
+busy is 1 when the conversation will act again WITHOUT input: a /loop wakeup
+(ScheduleWakeup not yet due, and not a stop) or an in-session CronCreate that
+was never deleted. Used by tmux-prune to decide whether a session is done, and
+by claude-resurrect to --resume the right conversation after a reboot.
+
+Prints nothing and exits 1 when no conversation matches (fresh claude, title
+not set yet).
+"""
+import glob, json, os, re, sys
+from datetime import datetime, timezone
+
+if len(sys.argv) != 3:
+    sys.exit("usage: claude-session-info <cwd> <pane title>")
+cwd, title = sys.argv[1], sys.argv[2]
+want = re.sub(r"^\s*[^\w\s]+\s+", "", title).strip()
+if not want:
+    sys.exit(1)
+pdir = os.path.expanduser("~/.claude/projects/" + cwd.replace("/", "-"))
+
+best = None
+for f in glob.glob(os.path.join(pdir, "*.jsonl")):
+    ai = None
+    try:
+        with open(f, errors="replace") as fh:
+            for line in fh:
+                if '"aiTitle"' in line:
+                    try:
+                        ai = json.loads(line).get("aiTitle", ai)
+                    except ValueError:
+                        pass
+    except OSError:
+        continue
+    if ai == want and (best is None or os.path.getmtime(f) > os.path.getmtime(best)):
+        best = f
+if best is None:
+    sys.exit(1)
+
+pending = False
+crons = 0
+now = datetime.now(timezone.utc)
+with open(best, errors="replace") as fh:
+    for line in fh:
+        if "ScheduleWakeup" not in line and "Cron" not in line:
+            continue
+        try:
+            o = json.loads(line)
+        except ValueError:
+            continue
+        if o.get("type") != "assistant":
+            continue
+        for blk in (o.get("message") or {}).get("content") or []:
+            if not isinstance(blk, dict) or blk.get("type") != "tool_use":
+                continue
+            name, inp = blk.get("name"), blk.get("input") or {}
+            if name == "ScheduleWakeup":
+                if inp.get("stop"):
+                    pending = False
+                    continue
+                try:
+                    ts = datetime.fromisoformat(o["timestamp"].replace("Z", "+00:00"))
+                    due = (ts - now).total_seconds() + float(inp.get("delaySeconds", 0))
+                    pending = due > -600          # not yet fired (10 min grace)
+                except (KeyError, ValueError, TypeError):
+                    pending = True
+            elif name == "CronCreate":
+                crons += 1
+            elif name == "CronDelete":
+                crons = max(0, crons - 1)
+
+print(f"{os.path.basename(best)[:-6]}\t{1 if (pending or crons) else 0}")

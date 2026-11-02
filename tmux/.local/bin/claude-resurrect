@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# claude-resurrect — what tmux-resurrect runs in a pane that was running claude
+# (@resurrect-processes "~claude->claude-resurrect" in .tmux.conf).
+#
+# Resurrect only brings back the command line, which would start a NEW
+# conversation. The saved pane title is the conversation's aiTitle, so look the
+# conversation up (claude-session-info) and `--resume <id>` it; if nothing
+# matches (fresh claude, no title yet) fall back to `-c`, the most recent
+# conversation in this directory.
+#
+#   claude-resurrect [-n] [pane]     -n: print the command instead of running it
+set -u
+dry=; [ "${1:-}" = -n ] && { dry=1; shift; }
+pane=${1:-${TMUX_PANE:?run inside tmux}}
+here=$(dirname "$(readlink -f "$0")")
+
+IFS=$'\t' read -r session window index cwd < <(tmux display -p -t "$pane" $'#S\t#I\t#P\t#{pane_current_path}')
+
+# the pane's line in the save file: pane <session> <window> ... <pane index> <title> :<cwd> ... :<full command>
+title= cmd=
+save=$(readlink -f ~/.local/share/tmux/resurrect/last 2>/dev/null)
+[ -n "$save" ] && IFS=$'\t' read -r title cmd < <(awk -F'\t' -v s="$session" -v w="$window" -v p="$index" \
+    '$1=="pane" && $2==s && $3==w && $6==p { print $7 "\t" substr($11,2); exit }' "$save")
+
+# drop resume flags from the saved command so they do not stack up across restores
+cmd=$(printf '%s' "${cmd:-claude --dangerously-skip-permissions}" | sed -E 's/ --resume [^ ]+//; s/ (-c|--continue)( |$)/ /')
+resume=-c
+sid=$("$here/claude-session-info" "$cwd" "$title" 2>/dev/null | cut -f1)
+[ -n "$sid" ] && resume="--resume $sid"
+
+[ -n "$dry" ] && { echo "$cmd $resume"; exit 0; }
+exec $cmd $resume
