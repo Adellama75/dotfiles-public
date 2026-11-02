@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# tmux-sticky-attach — attach a tmux client that can come back where it was.
+#
+#   tmux-sticky-attach <client-id> [session]
+#   tmux-sticky-attach --note <client-pid> <session-id>     (hook use only)
+#
+# Each kitty window on lavender is one tmux client here with a unique
+# <client-id>. When its ssh connection dies (laptop sleep, wifi drop) the
+# window reconnects with the SAME <client-id>, and this script puts it back on
+# whatever session that client was last on — including sessions it moved to
+# with `t`, and sessions renamed since (we track the id, $N, not the name).
+#
+#   first call   -> attaches to [session] (name or $id) and records it
+#   later calls  -> attaches to the remembered session, ignoring [session]
+#   exit 3       -> nothing to attach to (remembered + requested both gone)
+#
+# State: ~/.cache/tmux-sticky/<client-id> = session id. The global hook
+#   client-session-changed -> tmux-sticky-attach --note <client_pid> <session_id>
+# (in .tmux.conf) keeps it current. The hook only knows the tmux client's pid,
+# so we exec tmux (pid = our pid) and leave pid -> client-id in pid/<pid>.
+set -u
+dir=$HOME/.cache/tmux-sticky
+
+if [ "${1:-}" = --note ]; then
+    # called from the hook: the client with pid $2 is now on session $3
+    f=$dir/pid/${2:?pid}
+    [ -f "$f" ] || exit 0
+    printf '%s' "${3:?session id}" > "$dir/$(cat "$f")"
+    exit 0
+fi
+
+id=${1:?client id}; want=${2:-}
+mkdir -p "$dir/pid"
+find "$dir" -type f -mtime +14 -delete 2>/dev/null   # old windows' records
+
+alive() { [ -n "$1" ] && tmux has-session -t "$1" 2>/dev/null; }
+
+target=$(cat "$dir/$id" 2>/dev/null)
+if ! alive "$target"; then
+    target=
+    if [ -n "$want" ]; then
+        case "$want" in \$*) t=$want ;; *) t="=$want" ;; esac   # = : exact name match
+        target=$(tmux display-message -p -t "$t" '#{session_id}' 2>/dev/null)
+        alive "$target" || target=
+    fi
+fi
+[ -n "$target" ] || exit 3
+
+printf '%s' "$target" > "$dir/$id"
+printf '%s' "$id" > "$dir/pid/$$"
+exec tmux attach-session -t "$target"
