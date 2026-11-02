@@ -10,10 +10,13 @@ mime=$(file -b --mime-type "$tmp")
 
 # Over ssh into a machine with its own X session, use that session's display.
 [ -z "$DISPLAY" ] && [ -S /tmp/.X11-unix/X0 ] && export DISPLAY=:0
+# setsid: xclip keeps running to own the clipboard; detach it so it survives
+# the end of an ssh session (otherwise the copy vanishes when ssh exits).
+detach=; command -v setsid >/dev/null 2>&1 && detach=setsid
 if [ -n "$DISPLAY" ] && command -v xclip >/dev/null 2>&1; then
   case "$mime" in
-    image/*) xclip -selection clipboard -t "$mime" -i "$tmp" >/dev/null 2>&1 ;;
-    *)       xclip -selection clipboard -i "$tmp" >/dev/null 2>&1 ;;
+    image/*) $detach xclip -selection clipboard -t "$mime" -i "$tmp" >/dev/null 2>&1 ;;
+    *)       $detach xclip -selection clipboard -i "$tmp" >/dev/null 2>&1 ;;
   esac
   exit
 fi
