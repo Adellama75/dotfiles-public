@@ -89,7 +89,8 @@ wins = [w for osw in tree for tab in osw["tabs"] for w in tab["windows"]]
 mine = [w for w in wins if str(w.get("id")) == os.environ.get("KITTY_WINDOW_ID", "")]
 focused = [w for osw in tree if osw.get("is_focused") for tab in osw["tabs"] if tab.get("is_focused")
            for w in tab["windows"] if w.get("is_focused")]
-for w in mine + focused:
+# only fall back to the focused window when we were not told which one we are in
+for w in (mine or focused):
     r = ssh_in(w)
     if r: print(*r); sys.exit()
 PY
