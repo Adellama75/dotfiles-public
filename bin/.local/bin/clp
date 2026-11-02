@@ -12,8 +12,8 @@ mime=$(file -b --mime-type "$tmp")
 [ -z "$DISPLAY" ] && [ -S /tmp/.X11-unix/X0 ] && export DISPLAY=:0
 if [ -n "$DISPLAY" ] && command -v xclip >/dev/null 2>&1; then
   case "$mime" in
-    image/*) xclip -selection clipboard -t "$mime" -i "$tmp" ;;
-    *)       xclip -selection clipboard -i "$tmp" ;;
+    image/*) xclip -selection clipboard -t "$mime" -i "$tmp" >/dev/null 2>&1 ;;
+    *)       xclip -selection clipboard -i "$tmp" >/dev/null 2>&1 ;;
   esac
   exit
 fi
@@ -21,7 +21,7 @@ fi
 case "$mime" in
   image/*) echo "clp: no X display; OSC 52 can't carry images" >&2; exit 1 ;;
 esac
-{ : > /dev/tty; } 2>/dev/null || { echo "clp: no X display and no terminal for OSC 52" >&2; exit 1; }
+( : > /dev/tty ) 2>/dev/null || { echo "clp: no X display and no terminal for OSC 52" >&2; exit 1; }
 b64=$(base64 < "$tmp" | tr -d '\n')
 if [ -n "$TMUX" ]; then
   # tmux passthrough (needs allow-passthrough on, set in dotfiles' tmux.conf)
