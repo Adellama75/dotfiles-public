@@ -1,0 +1,92 @@
+#!/bin/bash
+# airdrop — send/receive files with Apple devices from Linux.
+#
+# Uses OWL (open Apple Wireless Direct Link, github.com/seemoo-lab/owl) to put
+# the Wi-Fi card into AWDL mode and OpenDrop (pipx install opendrop) to speak
+# the AirDrop protocol on top of it.  The Wi-Fi card can't do AWDL and stay on
+# your network at the same time, so this script takes the card away from
+# NetworkManager for the duration and hands it back (and reconnects) on exit.
+#
+#   airdrop receive              wait for incoming files (saved in current dir)
+#   airdrop send FILE [PEER]     send FILE; PEER is the index/name from the list
+#   airdrop find                 list AirDrop peers until Ctrl-C
+#
+# Options (before the verb):   -c CHANNEL   6 (default), 44 or 149
+#                              -n NAME      name shown on the iPhone/Mac
+# OWL's log goes to $XDG_RUNTIME_DIR/airdrop-owl.log.
+# On the Apple side set AirDrop to "Everyone for 10 minutes": we're not in
+# anyone's contacts.
+set -u
+
+CHAN=${AIRDROP_CHANNEL:-6}
+NAME=${AIRDROP_NAME:-$(hostname)}
+while getopts "c:n:h" o; do
+	case $o in
+		c) CHAN=$OPTARG ;;
+		n) NAME=$OPTARG ;;
+		*) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+	esac
+done
+shift $((OPTIND - 1))
+VERB=${1:-}; shift || true
+case $VERB in receive|send|find) ;; *) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;; esac
+
+for b in owl opendrop iw nmcli; do
+	command -v "$b" >/dev/null || { echo "airdrop: $b not installed" >&2; exit 1; }
+done
+
+IF=$(iw dev | awk '$1=="Interface"{print $2; exit}')
+[ -n "$IF" ] || { echo "airdrop: no wireless interface found" >&2; exit 1; }
+CON=$(nmcli -t -f NAME,DEVICE con show --active | awk -F: -v i="$IF" '$2==i{print $1; exit}')
+OWL_PID=
+
+restore() {
+	trap - EXIT INT TERM
+	[ -n "$OWL_PID" ] && sudo kill "$OWL_PID" 2>/dev/null
+	sudo ip link set "$IF" down
+	sudo iw dev "$IF" set type managed
+	sudo ip link set "$IF" up
+	nmcli dev set "$IF" managed yes >/dev/null
+	if [ -n "$CON" ]; then
+		echo "airdrop: reconnecting to $CON" >&2
+		nmcli con up "$CON" >/dev/null 2>&1 || echo "airdrop: reconnect failed, use nmcli" >&2
+	fi
+}
+trap restore EXIT INT TERM
+
+echo "airdrop: taking $IF off Wi-Fi${CON:+ ($CON)} for AWDL on channel $CHAN" >&2
+nmcli dev disconnect "$IF" >/dev/null 2>&1
+nmcli dev set "$IF" managed no >/dev/null
+sudo ip link set "$IF" down
+sudo iw dev "$IF" set type monitor || exit 1
+sudo ip link set "$IF" up || exit 1
+
+OWL_LOG=${XDG_RUNTIME_DIR:-/tmp}/airdrop-owl.log
+sudo owl -N -i "$IF" -c "$CHAN" -v >"$OWL_LOG" 2>&1 &
+OWL_PID=$!
+for _ in $(seq 50); do
+	ip link show awdl0 >/dev/null 2>&1 && break
+	sleep 0.2
+done
+ip link show awdl0 >/dev/null 2>&1 || { echo "airdrop: owl did not create awdl0" >&2; exit 1; }
+sleep 1
+
+export PYTHONWARNINGS=ignore
+case $VERB in
+	receive)
+		echo "airdrop: receiving as \"$NAME\" into $PWD (Ctrl-C to stop)" >&2
+		opendrop -n "$NAME" receive ;;
+	find)
+		opendrop -n "$NAME" find ;;
+	send)
+		FILE=${1:-}; PEER=${2:-}
+		[ -f "$FILE" ] || { echo "airdrop: no such file: $FILE" >&2; exit 1; }
+		if [ -z "$PEER" ]; then
+			echo "airdrop: looking for peers for 10 s..." >&2
+			timeout 10 opendrop -n "$NAME" find
+			read -r -p "send to (index or name): " PEER
+		fi
+		opendrop -n "$NAME" send -f "$FILE" -r "$PEER" ;;
+esac
+
+# Written with Claude Fable 5.1
