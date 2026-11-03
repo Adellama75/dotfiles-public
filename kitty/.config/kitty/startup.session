@@ -1,0 +1,6 @@
+# kitty startup layout (startup_session in kitty.conf). One tab running
+# cumin-reopen, which turns into one tab per tmux session still alive on
+# cumin that no window is showing (after a laptop reboot / kitty restart),
+# or a plain cumin-shell when there is nothing to bring back.
+new_tab
+launch /home/ada/dev/kitty-session/bin/cumin-reopen
