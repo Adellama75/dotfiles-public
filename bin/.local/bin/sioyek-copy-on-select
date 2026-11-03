@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+"""Copy-on-select for sioyek (X11).
+
+sioyek puts mouse-selected text into the X11 PRIMARY selection (the
+middle-click buffer) but never into CLIPBOARD, so ctrl+v in other apps
+doesn't see it.  This daemon watches for left-button releases (via
+`xinput test-xi2`, which needs no root) and, when the focused window is
+sioyek and sioyek's X client owns PRIMARY, mirrors PRIMARY into
+CLIPBOARD.  Selections owned by other apps are left alone, and a plain
+click that changes nothing is a no-op.
+
+(XFixes SetSelectionOwnerNotify can't be used: Qt only re-takes PRIMARY
+ownership once, so later selections in the same window fire no event.)
+
+Deps: python3-xlib, xinput, xclip.  Run as a systemd user service.
+"""
+import re
+import select
+import subprocess
+import sys
+import time
+
+from Xlib import X, Xatom, display
+
+WM_CLASSES = {"sioyek"}
+DEBOUNCE = 0.10  # s between the release and reading PRIMARY
+LEFT = 1
+
+EV_RE = re.compile(r"^EVENT type \d+ \((\w+)\)")
+DEV_RE = re.compile(r"^\s*device: (\d+) \((\d+)\)")
+DETAIL_RE = re.compile(r"^\s*detail: (\d+)")
+
+
+def log(msg):
+    print(msg, file=sys.stderr, flush=True)
+
+
+def active_window(d, root):
+    atom = d.intern_atom("_NET_ACTIVE_WINDOW")
+    prop = root.get_full_property(atom, X.AnyPropertyType)
+    if not prop or not prop.value:
+        return None
+    return d.create_resource_object("window", prop.value[0])
+
+
+def wm_class(win):
+    try:
+        cls = win.get_wm_class()
+    except Exception:
+        return None
+    return cls[0] if cls else None
+
+
+def same_client(d, a, b):
+    """True if two X windows were created by the same X client.
+
+    Qt's PRIMARY owner is a hidden helper window with no WM_CLASS or PID,
+    but every XID a client creates shares that client's resource-id base.
+    """
+    base = ~d.display.info.resource_id_mask
+    return (a.id & base) == (b.id & base)
+
+
+def xclip(selection, text=None):
+    if text is None:
+        r = subprocess.run(["xclip", "-o", "-selection", selection],
+                           capture_output=True)
+        return r.stdout
+    subprocess.run(["xclip", "-i", "-selection", selection], input=text,
+                   check=False)
+
+
+def mirror(d, root, last):
+    win = active_window(d, root)
+    if win is None or wm_class(win) not in WM_CLASSES:
+        return last
+    owner = d.get_selection_owner(Xatom.PRIMARY)
+    if owner == X.NONE or not same_client(d, owner, win):
+        return last
+    text = xclip("primary")
+    if not text.strip() or text == last:
+        return last
+    xclip("clipboard", text)
+    log(f"copied {len(text)} bytes")
+    return text
+
+
+def releases(proc):
+    """Yield button numbers for left-button releases on master devices.
+
+    xinput reports each physical release twice (slave device, then the
+    master it's attached to); we keep the master copy, whose deviceid
+    differs from its sourceid.
+    """
+    ev = dev = None
+    for line in proc.stdout:
+        m = EV_RE.match(line)
+        if m:
+            ev, dev = m.group(1), None
+            continue
+        m = DEV_RE.match(line)
+        if m:
+            dev = (m.group(1), m.group(2))
+            continue
+        m = DETAIL_RE.match(line)
+        if m and ev == "RawButtonRelease" and dev and dev[0] != dev[1]:
+            yield int(m.group(1))
+
+
+def main():
+    d = display.Display()
+    root = d.screen().root
+    proc = subprocess.Popen(["xinput", "test-xi2", "--root"],
+                            stdout=subprocess.PIPE, text=True, bufsize=1)
+    log("watching left-button releases for " + ", ".join(sorted(WM_CLASSES)))
+    last = None
+    for button in releases(proc):
+        if button != LEFT:
+            continue
+        time.sleep(DEBOUNCE)
+        try:
+            last = mirror(d, root, last)
+        except Exception as e:  # never die on a flaky read
+            log(f"mirror failed: {e}")
+            time.sleep(0.5)
+    log("xinput exited")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+# Written with Claude Fable 5.1
