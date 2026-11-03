@@ -13,6 +13,7 @@
 #                             attached to for 24h — windows that went away
 #                             without a close signal (laptop crash, kitty killed).
 #   -n with any of them: dry run, just say what would go.
+#   Kills are logged to the journal: journalctl -t tmux-prune
 #
 # A session is DONE when every pane is one of:
 #   - a bare shell with no child processes
@@ -41,10 +42,14 @@ US=$'\x1f'   # field separator for tmux -F output: tab is IFS whitespace, so an 
 shell_re='^(zsh|bash|sh|dash|fish)$'
 viewer_re='^(less|more|man|top|htop|btop|vim|nvim|nano)$'
 
+# Every kill (and dry-run verdict) also goes to the journal, since the
+# client-detached hook runs with no terminal: journalctl -t tmux-prune
+log() { echo "$*"; logger -t tmux-prune -- "[$mode] $*"; }
+
 kill_session() {   # $1 session, $2 reason
     local name; name=$(tmux display -p -t "$1" '#S' 2>/dev/null) || return
-    if [ -n "$dry" ]; then echo "would kill $name ($2)"
-    else tmux kill-session -t "$1" && echo "pruned $name ($2)"; fi
+    if [ -n "$dry" ]; then log "would kill $name ($2)"
+    else tmux kill-session -t "$1" && log "pruned $name ($2)"; fi
 }
 
 # the claude process in a pane: pane_pid is usually the shell that launched it
