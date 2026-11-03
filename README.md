@@ -6,7 +6,8 @@ a `termux` package (Catppuccin Mocha palette for the Termux app, matching the ki
 and a `bin` package of small scripts: `clp` copies files/stdin to the clipboard (xclip, or OSC 52 over ssh with no display),
 `sshpaste` pastes a clipboard image into a Claude Code prompt running over ssh+tmux,
 `airdrop` sends/receives files with Apple devices via OWL + OpenDrop,
-`sioyek-copy-on-select` mirrors sioyek's mouse selection into the clipboard so ctrl+v works; needs python3-xlib, xinput, xclip).
+`sioyek-copy-on-select` mirrors sioyek's mouse selection into the clipboard so ctrl+v works; needs python3-xlib, xinput, xclip,
+`kitty-find` is ctrl+shift+f scrollback search: tmux copy-mode search in a cumin window, kitty's pager otherwise).
 Personal config lives in a separate private repo.
 
 Each top-level directory is a [GNU Stow](https://www.gnu.org/software/stow/) package that mirrors `~`:

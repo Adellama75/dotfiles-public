@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""ctrl+shift+f in kitty: search the scrollback, browser-style.
+
+Usage: kitty-find <kitty window id>   (kitty.conf passes @active-kitty-window-id)
+
+If the window is a cumin tmux session (reached via cumin-shell / ssh), type
+tmux's keys into it: prefix C-a, [ (copy mode), ? (incremental search
+upward).  Enter confirms, n / N jump between matches, Esc leaves.
+Otherwise open kitty's own scrollback in its pager (less: ? searches
+upward, n / N next / prev, q quits).  Either way the key works while
+claude is running, because the scrollback belongs to tmux or kitty.
+"""
+import json
+import subprocess
+import sys
+
+TMUX_HOSTS = ("cumin-shell", "ssh")
+TMUX_SEARCH = "\x01[?"  # C-a [ ?
+
+
+def kitty(*args, **kw):
+    return subprocess.run(["kitty", "@", *args], **kw)
+
+
+def main():
+    win = sys.argv[1]
+    out = kitty("ls", "--match", f"id:{win}", capture_output=True, text=True)
+    windows = [w for os_win in json.loads(out.stdout or "[]")
+               for tab in os_win["tabs"] for w in tab["windows"]]
+    if not windows:
+        return 1
+    procs = windows[0].get("foreground_processes", [])
+    argv0 = [p["cmdline"][0] for p in procs if p.get("cmdline")]
+    in_tmux = any(a.endswith(h) for a in argv0 for h in TMUX_HOSTS) or any(
+        "cumin-shell" in " ".join(p["cmdline"]) for p in procs)
+    if in_tmux:
+        kitty("send-text", "--match", f"id:{win}", TMUX_SEARCH)
+    else:
+        kitty("action", "--match", f"id:{win}", "show_scrollback")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+# Written with Claude Fable 5.1
