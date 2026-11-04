@@ -106,7 +106,25 @@ class Search(Handler):
         self.cached_values["mode"] = self.mode
         self.update_prompt()
 
+    def delete_word_by_space(self) -> None:
+        before, _ = self.line_edit.split_at_cursor()
+
+        try:
+            start, _ = reindex(before, SPACE_PATTERN_END, right=True)
+        except ValueError:
+            start = -1
+
+        try:
+            space = before[:start].rindex(" ")
+        except ValueError:
+            space = 0
+        self.line_edit.backspace(len(before) - space)
+        self.refresh()
+
     def on_text(self, text: str, in_bracketed_paste: bool = False) -> None:
+        if text == "\x17":  # raw ^W, e.g. from a kitty `send_text` map on ctrl+backspace
+            self.delete_word_by_space()
+            return
         if self.text_marked:
             self.text_marked = False
             self.line_edit.clear()
@@ -147,19 +165,7 @@ class Search(Handler):
             self.line_edit.end()
             self.refresh()
         elif key_event.matches("ctrl+backspace") or key_event.matches("ctrl+w"):
-            before, _ = self.line_edit.split_at_cursor()
-
-            try:
-                start, _ = reindex(before, SPACE_PATTERN_END, right=True)
-            except ValueError:
-                start = -1
-
-            try:
-                space = before[:start].rindex(" ")
-            except ValueError:
-                space = 0
-            self.line_edit.backspace(len(before) - space)
-            self.refresh()
+            self.delete_word_by_space()
         elif key_event.matches("ctrl+left") or key_event.matches("ctrl+b"):
             before, _ = self.line_edit.split_at_cursor()
             try:
