@@ -7,7 +7,7 @@ and a `bin` package of small scripts: `clp` copies files/stdin to the clipboard 
 `sshpaste` pastes a clipboard image into a Claude Code prompt running over ssh+tmux,
 `airdrop` sends/receives files with Apple devices via OWL + OpenDrop,
 `sioyek-copy-on-select` mirrors sioyek's mouse selection into the clipboard so ctrl+v works; needs python3-xlib, xinput, xclip,
-`kitty-find` is ctrl+shift+f scrollback search: tmux copy-mode search in a cumin window, kitty's pager otherwise).
+`kitty-find` is ctrl+f scrollback search: tmux copy-mode search in a cumin window, kitty's pager otherwise).
 Personal config lives in a separate private repo.
 
 Each top-level directory is a [GNU Stow](https://www.gnu.org/software/stow/) package that mirrors `~`:
