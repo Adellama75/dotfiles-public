@@ -1,0 +1,9 @@
+#!/bin/sh
+# ada-mail: send email as ada@mia.ws. Thin wrapper around ~/.ada-mail/send_mail.py
+# (send-only Gmail API, Python 3 stdlib). `ada-mail --help` lists the options.
+#   ada-mail --to x@y.z --subject "Hi" --body "Hello" [--cc] [--bcc] [--attach f] [--html] [--dry-run]
+script="$HOME/.ada-mail/send_mail.py"
+[ -f "$script" ] || { echo "ada-mail: $script not found on $(hostname); copy ~/.ada-mail from a set-up machine" >&2; exit 1; }
+: "${ADA_MAIL_CREDENTIALS:=$HOME/.ada-mail/ada-mail-credentials.json}"
+export ADA_MAIL_CREDENTIALS
+exec python3 -I "$script" "$@"
