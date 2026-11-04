@@ -18,6 +18,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 TMUX_HOSTS = ("cumin-shell", "ssh")
 TMUX_SEARCH = "\x01[?"  # C-a [ ?
@@ -47,24 +48,46 @@ def kitty(*args, **kw):
     return subprocess.run(cmd, **kw)
 
 
+def search_bar(tab, win):
+    """Open the kitten as a thin bar under the window, then restore the layout.
+
+    Only the `splits` layout can place a new window below another one with a
+    chosen size (in `tall` it becomes a 50/50 column), so switch the tab to
+    splits while the bar is open and go back to the original layout after.
+    """
+    tab_match = ["--match", f"window_id:{win}"]
+    layout = tab["layout"]
+    if layout != "splits":
+        kitty("goto-layout", *tab_match, "splits")
+    # launch's --match picks a *tab*; --next-to picks the window to split
+    out = kitty("launch", *tab_match, "--next-to", f"id:{win}",
+                "--location=hsplit", "--bias=5", "--allow-remote-control",
+                "kitty", "+kitten", "search.py", win,
+                capture_output=True, text=True)
+    bar = out.stdout.strip()
+    if layout == "splits" or not bar.isdigit():
+        return
+    while kitty("ls", "--match", f"id:{bar}", capture_output=True).returncode == 0:
+        time.sleep(0.3)
+    kitty("goto-layout", *tab_match, layout)
+
+
 def main():
     win = sys.argv[1]
     out = kitty("ls", "--match", f"id:{win}", capture_output=True, text=True)
-    windows = [w for os_win in json.loads(out.stdout or "[]")
-               for tab in os_win["tabs"] for w in tab["windows"]]
-    if not windows:
+    tabs = [tab for os_win in json.loads(out.stdout or "[]")
+            for tab in os_win["tabs"] if tab["windows"]]
+    if not tabs:
         return 1
-    procs = windows[0].get("foreground_processes", [])
+    tab, window = tabs[0], tabs[0]["windows"][0]
+    procs = window.get("foreground_processes", [])
     argv0 = [p["cmdline"][0] for p in procs if p.get("cmdline")]
     in_tmux = any(a.endswith(h) for a in argv0 for h in TMUX_HOSTS) or any(
         "cumin-shell" in " ".join(p["cmdline"]) for p in procs)
     if in_tmux:
         kitty("send-text", "--match", f"id:{win}", TMUX_SEARCH)
     else:
-        # launch's --match picks a *tab*; --next-to picks the window to split
-        kitty("launch", "--match", f"window_id:{win}", "--next-to", f"id:{win}",
-              "--location=hsplit", "--allow-remote-control",
-              "kitty", "+kitten", "search.py", win)
+        search_bar(tab, win)
     return 0
 
 
