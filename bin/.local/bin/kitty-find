@@ -6,9 +6,12 @@ Usage: kitty-find <kitty window id>   (kitty.conf passes @active-kitty-window-id
 If the window is a cumin tmux session (reached via cumin-shell / ssh), type
 tmux's keys into it: prefix C-a, [ (copy mode), ? (incremental search
 upward).  Enter confirms, n / N jump between matches, Esc leaves.
-Otherwise open kitty's own scrollback in its pager (less: ? searches
-upward, n / N next / prev, q quits).  Either way the key works while
-claude is running, because the scrollback belongs to tmux or kitty.
+Otherwise open the search kitten (trygveaa/kitty-kitten-search, the two
+.py files next to kitty.conf): a find bar under the window that highlights
+matches live as you type.  Up/Down previous/next match, Tab toggles regex,
+Enter keeps the scroll position, Esc closes and scrolls back to the bottom.
+Either way the key works while claude is running, because the scrollback
+belongs to tmux or kitty.
 """
 import glob
 import json
@@ -58,7 +61,8 @@ def main():
     if in_tmux:
         kitty("send-text", "--match", f"id:{win}", TMUX_SEARCH)
     else:
-        kitty("action", "--match", f"id:{win}", "show_scrollback")
+        kitty("launch", "--match", f"id:{win}", "--location=hsplit",
+              "--allow-remote-control", "kitty", "+kitten", "search.py", win)
     return 0
 
 
