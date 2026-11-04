@@ -14,3 +14,6 @@ _env_prepend "$HOME/.local/bin"
 unset -f _env_prepend
 export PATH
 export BUN_INSTALL="$HOME/.bun" SDKMAN_DIR="$HOME/.sdkman"
+
+# ada-mail: send-only Gmail credential for ada@mia.ws (file is chmod 600, not in any repo).
+[ -f "$HOME/.ada-mail/ada-mail-credentials.json" ] && export ADA_MAIL_CREDENTIALS="$HOME/.ada-mail/ada-mail-credentials.json"
