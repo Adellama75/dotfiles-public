@@ -61,8 +61,10 @@ def main():
     if in_tmux:
         kitty("send-text", "--match", f"id:{win}", TMUX_SEARCH)
     else:
-        kitty("launch", "--match", f"id:{win}", "--location=hsplit",
-              "--allow-remote-control", "kitty", "+kitten", "search.py", win)
+        # launch's --match picks a *tab*; --next-to picks the window to split
+        kitty("launch", "--match", f"window_id:{win}", "--next-to", f"id:{win}",
+              "--location=hsplit", "--allow-remote-control",
+              "kitty", "+kitten", "search.py", win)
     return 0
 
 
