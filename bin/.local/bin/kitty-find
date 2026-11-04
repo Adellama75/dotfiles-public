@@ -10,7 +10,9 @@ Otherwise open kitty's own scrollback in its pager (less: ? searches
 upward, n / N next / prev, q quits).  Either way the key works while
 claude is running, because the scrollback belongs to tmux or kitty.
 """
+import glob
 import json
+import os
 import subprocess
 import sys
 
@@ -18,8 +20,28 @@ TMUX_HOSTS = ("cumin-shell", "ssh")
 TMUX_SEARCH = "\x01[?"  # C-a [ ?
 
 
+def socket():
+    """kitty's remote-control socket.
+
+    `launch --type=background` gives the child no KITTY_* variables, so
+    fall back to the listen_on socket of a live kitty (unix:/tmp/kitty-ada-<pid>).
+    """
+    if os.environ.get("KITTY_LISTEN_ON"):
+        return os.environ["KITTY_LISTEN_ON"]
+    for path in sorted(glob.glob(f"/tmp/kitty-{os.getlogin()}-*"), reverse=True):
+        try:
+            pid = int(path.rsplit("-", 1)[1])
+            os.kill(pid, 0)
+        except (ValueError, OSError):
+            continue
+        return "unix:" + path
+    return None
+
+
 def kitty(*args, **kw):
-    return subprocess.run(["kitty", "@", *args], **kw)
+    to = socket()
+    cmd = ["kitty", "@"] + (["--to", to] if to else []) + list(args)
+    return subprocess.run(cmd, **kw)
 
 
 def main():
