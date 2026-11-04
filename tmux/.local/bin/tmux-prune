@@ -38,7 +38,7 @@ while [ $# -gt 0 ]; do
 done
 here=$(dirname "$(readlink -f "$0")")
 sticky=$HOME/.cache/tmux-sticky
-US=$'\x1f'   # field separator for tmux -F output: tab is IFS whitespace, so an empty field would be swallowed by read
+US='|'      # field separator for tmux -F output. Not tab: IFS whitespace collapses empty fields. Not a control char: tmux prints it escaped (\037). Title is the last field, so a | in it is harmless.
 shell_re='^(zsh|bash|sh|dash|fish)$'
 viewer_re='^(less|more|man|top|htop|btop|vim|nvim|nano)$'
 
