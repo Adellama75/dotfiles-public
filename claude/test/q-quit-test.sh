@@ -17,7 +17,8 @@ bad() { echo "FAIL  $*"; fail=1; }
 # --- 1: tmux ---------------------------------------------------------------
 env -u CLAUDECODE -u TMUX tmux new-session -d -s "$s" -c "$dir" "env -u CLAUDECODE zsh -ic claude; exec zsh"
 ( sleep 10; tmux send-keys -t "$s" q; sleep 0.5; tmux send-keys -t "$s" Enter ) &
-env -u TMUX script -qec "tmux attach-session -t $s" /dev/null >/dev/null; rc=$?
+# TERM: under ssh without a tty it is "dumb" and tmux attach refuses to start
+env -u TMUX TERM=xterm-256color script -qec "tmux attach-session -t $s" /dev/null </dev/null >/dev/null; rc=$?
 wait
 [ "$rc" = 42 ] && ok "tmux: client exited 42" || bad "tmux: client exited $rc (want 42)"
 if tmux has-session -t "$s" 2>/dev/null; then bad "tmux: session survived"; tmux kill-session -t "$s"
