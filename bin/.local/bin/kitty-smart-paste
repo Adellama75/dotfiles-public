@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# kitty ctrl+v: paste text like ctrl+shift+v, but if the clipboard holds an
+# image, pass a real ctrl+v through so Claude Code does its native image paste
+# (over ssh to cumin that goes via the xclip shim in ~/dotfiles/bin-cumin).
+# Bound in kitty.conf with `launch --type=background --copy-env`, which hands
+# us KITTY_WINDOW_ID / KITTY_LISTEN_ON.
+win="id:${KITTY_WINDOW_ID:?run from kitty}"
+if timeout 1 xclip -selection clipboard -t TARGETS -o 2>/dev/null | grep -q '^image/'; then
+    exec kitten @ send-key --match "$win" ctrl+v
+fi
+exec kitten @ action --match "$win" paste_from_clipboard
