@@ -20,7 +20,7 @@ ok()  { echo "PASS  $*"; }
 bad() { echo "FAIL  $*"; fail=1; }
 
 # --- 1: tmux ---------------------------------------------------------------
-env -u CLAUDECODE -u TMUX tmux new-session -d -s "$s" -c "$dir" "env -u CLAUDECODE zsh -ic claude; exec zsh"
+env -u CLAUDECODE -u TMUX tmux -L "$s" -f /dev/null new-session -d -s "$s" -c "$dir" "env -u CLAUDECODE zsh -ic claude; exec zsh"
 ( sleep 10; tmux send-keys -t "$s" q; sleep 0.5; tmux send-keys -t "$s" Enter ) &
 # TERM: under ssh without a tty it is "dumb" and tmux attach refuses to start
 env -u TMUX TERM=xterm-256color script -qec "tmux -L $s -f /dev/null attach-session -t $s" /dev/null </dev/null >/dev/null; rc=$?
