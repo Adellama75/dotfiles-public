@@ -43,7 +43,8 @@ shell_re='^(zsh|bash|sh|dash|fish)$'
 viewer_re='^(less|more|man|top|htop|btop|vim|nvim|nano)$'
 
 # Every kill (and dry-run verdict) also goes to the journal, since the
-# client-detached hook runs with no terminal: journalctl -t tmux-prune
+# hooks run with no terminal (and discard stdout, else tmux pops it up over the
+# pane in view mode): journalctl -t tmux-prune
 log() { echo "$*"; logger -t tmux-prune -- "[$mode] $*"; }
 
 kill_session() {   # $1 session, $2 reason
