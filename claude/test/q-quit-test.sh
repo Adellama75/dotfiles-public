@@ -10,6 +10,11 @@ set -u
 dir=${1:-$HOME/dev}
 here=$(dirname "$(readlink -f "$0")")
 s=qq-test-$$
+# a private tmux server with no config: on a machine with no tmux running (lavender), a
+# fresh default server would let tmux-continuum restore saved sessions and
+# tmux-resurrect switch our client to one of them. The hook reaches this server
+# through $TMUX in the pane.
+tmux() { command tmux -L "$s" -f /dev/null "$@"; }
 fail=0
 ok()  { echo "PASS  $*"; }
 bad() { echo "FAIL  $*"; fail=1; }
@@ -18,13 +23,15 @@ bad() { echo "FAIL  $*"; fail=1; }
 env -u CLAUDECODE -u TMUX tmux new-session -d -s "$s" -c "$dir" "env -u CLAUDECODE zsh -ic claude; exec zsh"
 ( sleep 10; tmux send-keys -t "$s" q; sleep 0.5; tmux send-keys -t "$s" Enter ) &
 # TERM: under ssh without a tty it is "dumb" and tmux attach refuses to start
-env -u TMUX TERM=xterm-256color script -qec "tmux attach-session -t $s" /dev/null </dev/null >/dev/null; rc=$?
+env -u TMUX TERM=xterm-256color script -qec "tmux -L $s -f /dev/null attach-session -t $s" /dev/null </dev/null >/dev/null; rc=$?
 wait
 [ "$rc" = 42 ] && ok "tmux: client exited 42" || bad "tmux: client exited $rc (want 42)"
 # the session is killed only after claude finishes shutting down (~0.7s after the client exits)
 for _ in $(seq 60); do tmux has-session -t "$s" 2>/dev/null || break; sleep 0.1; done
 if tmux has-session -t "$s" 2>/dev/null; then bad "tmux: session survived 6s"; tmux kill-session -t "$s"
 else ok "tmux: session killed"; fi
+
+tmux kill-server 2>/dev/null
 
 # --- 2: no tmux (pty) ------------------------------------------------------
 python3 - "$dir" <<'PY' && ok "pty: shell exited" || bad "pty: shell still alive"

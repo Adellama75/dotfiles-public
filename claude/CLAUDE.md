@@ -37,9 +37,12 @@ pick changes up within 15 min. Only
      sides together.** Plain `kill-session` would drop the window to a local
      lavender shell (rc 0) instead of closing it.
    - in tmux, other panes left: wait for claude, then `kill-pane` only.
-   - no tmux: wait for claude (so the TUI restores the terminal), then SIGHUP the session-leader shell of claude's terminal (field 6 of
+   - no tmux: after 0.1 s (claude clears its screen ~0.04 s after SIGTERM), SIGHUP the session-leader shell of claude's terminal (field 6 of
      `/proc/<pid>/stat`, only if its comm is a shell). Closes the kitty window
-     or Termux session.
+     or Termux session. Claude itself keeps the tty open ~1.5 s longer while it shuts
+     down, so kitty needs `close_on_child_death yes` (dotfiles-public `kitty`
+     package) to close the window when the shell exits instead of waiting for that.
+     Measured 2026-11-08 on lavender: 2.52 s → 0.24 s.
 
 ### Gotcha: the closer must be double-forked (`setsid -f`)
 

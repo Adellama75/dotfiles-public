@@ -14,9 +14,10 @@
 #                           Claude's own SIGTERM shutdown takes ~0.7s; the
 #                           window doesn't wait for it, since the pane is going anyway.
 #   in tmux, other panes -> after claude exits, kill just this pane
-#   no tmux              -> after claude exits (so the TUI restores the
-#                           terminal), SIGHUP the terminal's session-leader
-#                           shell (kitty window / Termux session closes)
+#   no tmux              -> SIGHUP the terminal's session-leader shell after
+#                           0.1s (kitty window / Termux session closes). Not
+#                           after claude exits: it clears its screen at once
+#                           but its process lingers ~0.7-1.8s.
 
 prompt=$(jq -r '.prompt // empty' 2>/dev/null)
 [[ ${prompt//[[:space:]]/} == q ]] || exit 0
@@ -50,7 +51,7 @@ setsid -f bash -c '
       tmux kill-pane -t "$pane"
     fi
   elif [ -n "$leader" ]; then
-    wait_claude
+    sleep 0.1   # let claude take down its TUI (it does so ~0.04s after SIGTERM)
     kill -HUP "$leader"
   fi
 ' _ "$pid" "$leader" "${TMUX_PANE:-}" </dev/null >/dev/null 2>&1 &
