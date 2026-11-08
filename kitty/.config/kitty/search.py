@@ -66,6 +66,9 @@ class Search(Handler):
         self.line_edit.add_text(last_search)
         self.text_marked = bool(last_search)
         self.mode = cached_values.get("mode", "text")
+        # Set by Enter / shift+Enter: the query is confirmed, so n / b jump
+        # between hits and q closes.  Any other typing goes back to editing.
+        self.navigating = False
         self.update_prompt()
         self.mark()
 
@@ -121,7 +124,26 @@ class Search(Handler):
         self.line_edit.backspace(len(before) - space)
         self.refresh()
 
+    def scroll_to_hit(self, older: bool) -> None:
+        # The marker (create-marker in mark()) tags every hit; scroll_mark.py
+        # scrolls the target window to the previous (older, further up) or
+        # next (newer, further down) one.
+        extra = [] if older else ["next"]
+        for match_arg in self.match_args():
+            call_remote_control(["kitten", match_arg, str(SCROLLMARK_FILE), *extra])
+
     def on_text(self, text: str, in_bracketed_paste: bool = False) -> None:
+        if self.navigating and not in_bracketed_paste:
+            if text == "n":
+                self.scroll_to_hit(older=True)
+                return
+            if text == "b":
+                self.scroll_to_hit(older=False)
+                return
+            if text == "q":
+                self.quit(0)
+                return
+        self.navigating = False
         if text == "\x17":  # raw ^W, e.g. from a kitty `send_text` map on ctrl+backspace
             self.delete_word_by_space()
             return
@@ -152,6 +174,7 @@ class Search(Handler):
             self.refresh()
 
         if self.line_edit.on_key(key_event):
+            self.navigating = False
             self.refresh()
             return
 
@@ -259,13 +282,15 @@ class Search(Handler):
             self.switch_mode()
             self.refresh()
         elif key_event.matches("up"):
-            for match_arg in self.match_args():
-                call_remote_control(["kitten", match_arg, str(SCROLLMARK_FILE)])
+            self.scroll_to_hit(older=True)
         elif key_event.matches("down"):
-            for match_arg in self.match_args():
-                call_remote_control(["kitten", match_arg, str(SCROLLMARK_FILE), "next"])
+            self.scroll_to_hit(older=False)
+        elif key_event.matches("shift+enter"):
+            self.navigating = True
+            self.scroll_to_hit(older=False)
         elif key_event.matches("enter"):
-            self.quit(0)
+            self.navigating = True
+            self.scroll_to_hit(older=True)
         elif key_event.matches("esc"):
             self.quit(1)
 

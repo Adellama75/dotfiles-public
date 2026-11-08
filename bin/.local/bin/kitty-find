@@ -8,8 +8,10 @@ tmux's keys into it: prefix C-a, [ (copy mode), ? (incremental search
 upward).  Enter confirms, n / N jump between matches, Esc leaves.
 Otherwise open the search kitten (trygveaa/kitty-kitten-search, the two
 .py files next to kitty.conf): a find bar under the window that highlights
-matches live as you type.  Up/Down previous/next match, Tab toggles regex,
-Enter keeps the scroll position, Esc closes and scrolls back to the bottom.
+matches live as you type.  Enter / shift+Enter jump to the next older /
+newer match; after that n / b do the same and q closes in place (typing
+anything else edits the query again).  Up/Down also step through matches,
+Tab toggles regex, Esc closes and scrolls back to the bottom.
 Either way the key works while claude is running, because the scrollback
 belongs to tmux or kitty.
 """
