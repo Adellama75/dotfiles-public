@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# cumin-tmux — open a fresh tmux session on cumin from a machine without
+# kitty-session (galangal / Termux). The portable cousin of lavender's
+# cumin-shell, minus the kitty bits and the restore-at-startup.
+#
+#   cumin-tmux        new session at ~/dev on cumin (named 1, 2, ... like cumin-shell)
+#
+# Inside it's the same cumin tmux, so `t` switches sessions, prefix+d detaches.
+# If the CONNECTION drops (phone sleeps, wifi/mobile handover: ssh exit 255) it
+# reconnects to the session you were last on, even after a `t` switch, via
+# tmux-sticky-attach on cumin. Ctrl-C while reconnecting gives up.
+# Detaching (prefix+d, or `t l`) brings you back to the local shell; the
+# session keeps running on cumin.
+set -u
+
+host=${CUMIN_HOST:-cumin}
+SSH=(ssh -o ConnectTimeout=5 -o ServerAliveInterval=15 -o ServerAliveCountMax=3)
+id="${CUMIN_CLIENT_PREFIX:-termux}-$$-$(date +%s)"   # this terminal's sticky-attach client id
+
+new_session() {   # prints the new session's id ($N)
+    "${SSH[@]}" "$host" 'n=1; until tmux new-session -d -s "$n" -P -F "#{session_id}" -c "$HOME/dev" 2>/dev/null; do
+        n=$((n + 1)); [ "$n" -gt 999 ] && { tmux new-session -d -P -F "#{session_id}" -c "$HOME/dev"; break; }
+    done'
+}
+
+# a dead ssh leaves the terminal in tmux/claude modes (mouse, alt screen, paste, kitty keys)
+fix_terminal() {
+    printf '\e[?1000l\e[?1002l\e[?1003l\e[?1006l\e[?1004l\e[?2004l\e[<u\e[?1049l\e[?25h\e[0m'
+    stty sane 2>/dev/null
+}
+
+sid=$(new_session) || { echo "⚠  $host unreachable." >&2; exit 1; }
+
+abort=; trap 'abort=1' INT
+wait=0
+while :; do
+    t0=$(date +%s)
+    "${SSH[@]}" -t "$host" "tmux-sticky-attach '$id' '$sid'"
+    rc=$?
+    [ $(( $(date +%s) - t0 )) -gt 30 ] && wait=0       # was connected a while: fresh backoff
+    [ -n "$abort" ] && { echo; echo "gave up reconnecting." >&2; break; }
+    case $rc in
+        255)                                          # connection lost
+            fix_terminal
+            [ "$wait" -eq 0 ] && echo "⚠  lost $host — reconnecting to the same session (Ctrl-C: give up)…" >&2
+            case $wait in 0) wait=1 ;; 1) wait=2 ;; 2) wait=3 ;; 3) wait=5 ;; *) wait=10 ;; esac
+            sleep "$wait"
+            [ -n "$abort" ] && { echo "gave up reconnecting." >&2; break; }
+            ;;
+        3)                                            # session gone: open a fresh one
+            echo "session gone on $host — opening a fresh one." >&2
+            sid=$(new_session) || { echo "⚠  $host unreachable." >&2; break; }
+            wait=0
+            ;;
+        *)  break ;;                                  # detached / killed / q-quit (42): back to local shell
+    esac
+done
