@@ -6,12 +6,14 @@ Usage: kitty-find <kitty window id>   (kitty.conf passes @active-kitty-window-id
 If the window is a cumin tmux session (reached via cumin-shell / ssh), type
 tmux's keys into it: prefix C-a, [ (copy mode), ? (incremental search
 upward).  Enter confirms, n / N jump between matches, Esc leaves.
-Otherwise open the search kitten (trygveaa/kitty-kitten-search, the two
-.py files next to kitty.conf): a find bar under the window that highlights
-matches live as you type.  Enter / shift+Enter jump to the next older /
-newer match; after that n / b do the same and q closes in place (typing
-anything else edits the query again).  Up/Down also step through matches,
-Tab toggles regex, Esc closes and scrolls back to the bottom.
+Otherwise open the search kitten (search.py next to kitty.conf, based on
+trygveaa/kitty-kitten-search): a find bar under the window that highlights
+matches live as you type.  Enter / shift+Enter select the next / previous
+match, starting from the oldest and wrapping at the ends; the selected one
+is orange (mark2 in kitty.conf) and the bar shows e.g. 3/17.  After the
+first Enter, n / b do the same and q closes in place; typing anything else
+edits the query again.  Down/Up also step, Tab toggles regex, Esc closes
+and scrolls back to the bottom.
 Either way the key works while claude is running, because the scrollback
 belongs to tmux or kitty.
 """

@@ -30,8 +30,8 @@ NON_ALPHANUM_PATTERN_START = re.compile(r"^[^\w\d]+")
 ALPHANUM_PATTERN = re.compile(r"[\w\d]+")
 
 
-def call_remote_control(args: list[str]) -> None:
-    subprocess.run(["kitty", "@", *args], capture_output=True)
+def call_remote_control(args: list[str]) -> str:
+    return subprocess.run(["kitty", "@", *args], capture_output=True, text=True).stdout
 
 
 def reindex(
@@ -51,7 +51,6 @@ def reindex(
     return m.span()
 
 
-SCROLLMARK_FILE = Path(__file__).parent.absolute() / "scroll_mark.py"
 
 
 class Search(Handler):
@@ -69,11 +68,18 @@ class Search(Handler):
         # Set by Enter / shift+Enter: the query is confirmed, so n / b jump
         # between hits and q closes.  Any other typing goes back to editing.
         self.navigating = False
+        # Index into self.hits of the selected hit (drawn in mark2 colours),
+        # None until the first jump; reset whenever the query changes.
+        self.current: int | None = None
+        self.hits: list[tuple[int, str]] = []
+        self.window_lines = 0
         self.update_prompt()
         self.mark()
 
     def update_prompt(self) -> None:
         self.prompt = "~> " if self.mode == "regex" else "=> "
+        if self.current is not None:
+            self.prompt = f"{self.current + 1}/{len(self.hits)} {self.prompt}"
 
     def init_terminal_state(self) -> None:
         self.write(set_line_wrapping(False))
@@ -124,26 +130,86 @@ class Search(Handler):
         self.line_edit.backspace(len(before) - space)
         self.refresh()
 
-    def scroll_to_hit(self, older: bool) -> None:
-        # The marker (create-marker in mark()) tags every hit; scroll_mark.py
-        # scrolls the target window to the previous (older, further up) or
-        # next (newer, further down) one.
-        extra = [] if older else ["next"]
-        for match_arg in self.match_args():
-            call_remote_control(["kitten", match_arg, str(SCROLLMARK_FILE), *extra])
+    def pattern(self) -> str:
+        text = self.line_edit.current_input
+        return text if self.mode == "regex" else re.escape(text)
+
+    def find_hits(self) -> list[tuple[int, str]]:
+        """Every hit in the window, oldest first, as (screen row, text before it).
+
+        Rows are counted the way kitty draws them: get-text marks soft wraps
+        with a bare CR, so one long logical line becomes several rows.  Kitty
+        runs markers row by row too, which is why the selected hit is pinned
+        by the text before it on its own row (see mark()).
+        """
+        text = self.line_edit.current_input
+        if not text or not self.window_ids:
+            return []
+        try:
+            pat = re.compile(self.pattern(), re.I if text.islower() else 0)
+        except re.error:
+            return []
+        dump = call_remote_control(
+            ["get-text", self.match_args()[0], "--extent", "all", "--add-wrap-markers"]
+        )
+        hits = []
+        rows = (r for line in dump.split("\n") for r in line.rstrip("\r").split("\r"))
+        for i, row in enumerate(rows):
+            for m in pat.finditer(row):
+                if m.end() > m.start():
+                    hits.append((i, row[: m.start()]))
+        return hits
+
+    def step(self, forward: bool) -> None:
+        """Select the next (newer, further down) or previous hit and scroll to it.
+
+        The first jump goes to the oldest hit going forward, the newest going
+        back; both ends wrap around.
+        """
+        self.hits = self.find_hits()
+        if not self.hits:
+            self.current = None
+        elif self.current is None:
+            self.current = 0 if forward else len(self.hits) - 1
+        else:
+            self.current = (self.current + (1 if forward else -1)) % len(self.hits)
+        self.update_prompt()
+        self.draw_screen()
+        self.mark()
+        if self.current is None:
+            return
+        if not self.window_lines:
+            wid = self.window_ids[0]
+            for os_window in json.loads(call_remote_control(["ls"]) or "[]"):
+                for tab in os_window["tabs"]:
+                    for w in tab["windows"]:
+                        if w["id"] == wid:
+                            self.window_lines = w["lines"]
+        # Put the hit a third of the way down the screen, with context above.
+        top = max(0, self.hits[self.current][0] - self.window_lines // 3)
+        for match_arg in self.match_args()[:1]:
+            call_remote_control(["scroll-window", match_arg, "start"])
+            if top:
+                call_remote_control(["scroll-window", match_arg, f"{top}l"])
+
+    def query_changed(self) -> None:
+        self.navigating = False
+        if self.current is not None:
+            self.current = None
+            self.update_prompt()
 
     def on_text(self, text: str, in_bracketed_paste: bool = False) -> None:
         if self.navigating and not in_bracketed_paste:
             if text == "n":
-                self.scroll_to_hit(older=True)
+                self.step(forward=True)
                 return
             if text == "b":
-                self.scroll_to_hit(older=False)
+                self.step(forward=False)
                 return
             if text == "q":
                 self.quit(0)
                 return
-        self.navigating = False
+        self.query_changed()
         if text == "\x17":  # raw ^W, e.g. from a kitty `send_text` map on ctrl+backspace
             self.delete_word_by_space()
             return
@@ -174,7 +240,8 @@ class Search(Handler):
             self.refresh()
 
         if self.line_edit.on_key(key_event):
-            self.navigating = False
+            if key_event.key in ("BACKSPACE", "DELETE"):
+                self.query_changed()
             self.refresh()
             return
 
@@ -279,18 +346,19 @@ class Search(Handler):
             self.line_edit.right(end - 1)
             self.refresh()
         elif key_event.matches("tab"):
+            self.query_changed()
             self.switch_mode()
             self.refresh()
         elif key_event.matches("up"):
-            self.scroll_to_hit(older=True)
+            self.step(forward=False)
         elif key_event.matches("down"):
-            self.scroll_to_hit(older=False)
+            self.step(forward=True)
         elif key_event.matches("shift+enter"):
             self.navigating = True
-            self.scroll_to_hit(older=False)
+            self.step(forward=False)
         elif key_event.matches("enter"):
             self.navigating = True
-            self.scroll_to_hit(older=True)
+            self.step(forward=True)
         elif key_event.matches("esc"):
             self.quit(1)
 
@@ -312,11 +380,16 @@ class Search(Handler):
         text = self.line_edit.current_input
         if text:
             match_case = "i" if text.islower() else ""
-            match_type = match_case + self.mode
+            # Always a regex marker so the selected hit can be added as colour 2
+            # ahead of colour 1 (kitty tries the alternatives in order).
+            spec = ["1", self.pattern()]
+            if self.current is not None and self.current < len(self.hits):
+                before = re.escape(self.hits[self.current][1])
+                spec = ["2", f"(?<=^{before})(?:{self.pattern()})", *spec]
             for match_arg in self.match_args():
                 try:
                     call_remote_control(
-                        ["create-marker", match_arg, match_type, "1", text]
+                        ["create-marker", match_arg, match_case + "regex", *spec]
                     )
                 except SystemExit:
                     self.remove_mark()
