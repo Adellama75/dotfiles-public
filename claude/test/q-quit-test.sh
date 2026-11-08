@@ -21,7 +21,9 @@ env -u CLAUDECODE -u TMUX tmux new-session -d -s "$s" -c "$dir" "env -u CLAUDECO
 env -u TMUX TERM=xterm-256color script -qec "tmux attach-session -t $s" /dev/null </dev/null >/dev/null; rc=$?
 wait
 [ "$rc" = 42 ] && ok "tmux: client exited 42" || bad "tmux: client exited $rc (want 42)"
-if tmux has-session -t "$s" 2>/dev/null; then bad "tmux: session survived"; tmux kill-session -t "$s"
+# the session is killed only after claude finishes shutting down (~0.7s after the client exits)
+for _ in $(seq 60); do tmux has-session -t "$s" 2>/dev/null || break; sleep 0.1; done
+if tmux has-session -t "$s" 2>/dev/null; then bad "tmux: session survived 6s"; tmux kill-session -t "$s"
 else ok "tmux: session killed"; fi
 
 # --- 2: no tmux (pty) ------------------------------------------------------
