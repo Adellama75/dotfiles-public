@@ -1,0 +1,6 @@
+# not stowed into ~: package docs and tests (this file replaces stow's default
+# ignore list, so the usual VCS/README entries are repeated here)
+^/CLAUDE\.md
+^/README.*
+^/test
+\.git

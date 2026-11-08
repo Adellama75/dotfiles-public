@@ -7,13 +7,16 @@
 # send "q" to the model. The block JSON after it is only a fallback in case the
 # kill didn't land within 2s.
 #
-# Then close the terminal behind it too (a detached watcher waits for claude to
-# exit, so the TUI gets to restore the terminal first):
-#   in tmux, last pane   -> detach its clients with exit code 42 (cumin-shell on
-#                           lavender closes the kitty window on 42), kill session
-#   in tmux, other panes -> kill just this pane
-#   no tmux              -> SIGHUP the terminal's session-leader shell (kitty
-#                           window / Termux session closes)
+# Then close the terminal behind it too, via a double-forked closer:
+#   in tmux, last pane   -> detach its clients with exit code 42 RIGHT AWAY
+#                           (cumin-shell on lavender closes the kitty window on
+#                           42), then kill the session once claude has exited.
+#                           Claude's own SIGTERM shutdown takes ~0.7s; the
+#                           window doesn't wait for it, since the pane is going anyway.
+#   in tmux, other panes -> after claude exits, kill just this pane
+#   no tmux              -> after claude exits (so the TUI restores the
+#                           terminal), SIGHUP the terminal's session-leader
+#                           shell (kitty window / Termux session closes)
 
 prompt=$(jq -r '.prompt // empty' 2>/dev/null)
 [[ ${prompt//[[:space:]]/} == q ]] || exit 0
@@ -34,17 +37,20 @@ case $(cat "/proc/$leader/comm" 2>/dev/null) in bash|zsh|sh|dash|fish) ;; *) lea
 
 setsid -f bash -c '
   pid=$1 leader=$2 pane=$3
-  while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
+  # wait for claude to exit, at most 5s
+  wait_claude() { for _ in $(seq 100); do kill -0 "$pid" 2>/dev/null || return; sleep 0.05; done; }
   if [ -n "$pane" ] && command -v tmux >/dev/null; then
     s=$(tmux display -p -t "$pane" "#{session_id}") || exit 0
     if [ "$(tmux list-panes -s -t "$s" | wc -l)" -le 1 ]; then
       tmux detach-client -s "$s" -E "exit 42"
-      sleep 0.3
+      wait_claude
       tmux kill-session -t "$s"
     else
+      wait_claude
       tmux kill-pane -t "$pane"
     fi
   elif [ -n "$leader" ]; then
+    wait_claude
     kill -HUP "$leader"
   fi
 ' _ "$pid" "$leader" "${TMUX_PANE:-}" </dev/null >/dev/null 2>&1 &
