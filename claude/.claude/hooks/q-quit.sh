@@ -32,7 +32,7 @@ done
 leader=$(awk '{print $6}' "/proc/$pid/stat" 2>/dev/null)
 case $(cat "/proc/$leader/comm" 2>/dev/null) in bash|zsh|sh|dash|fish) ;; *) leader= ;; esac
 
-setsid bash -c '
+setsid -f bash -c '
   pid=$1 leader=$2 pane=$3
   while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
   if [ -n "$pane" ] && command -v tmux >/dev/null; then
