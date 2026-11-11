@@ -5,7 +5,9 @@
 # (kitty) puts the text on the local machine's clipboard. OSC 52 is text only.
 tmp=$(mktemp) || exit 1
 trap 'rm -f "$tmp"' EXIT
-if [ -t 0 ]; then cat "$@" > "$tmp"; else cat > "$tmp"; fi
+# File arguments win over stdin: an agent's shell has a non-tty (empty) stdin,
+# so testing for a tty here made `clp file` copy nothing.
+if [ $# -gt 0 ]; then cat "$@" > "$tmp"; else cat > "$tmp"; fi
 mime=$(file -b --mime-type "$tmp")
 
 # Over ssh into a machine with its own X session, use that session's display.
