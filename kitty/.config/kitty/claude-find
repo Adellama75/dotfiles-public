@@ -1,18 +1,27 @@
 #!/bin/sh
-# ctrl+f in a Claude Code window (see kitty.conf): toggle the transcript view
-# (ctrl+o) and, only when opening it, start its search (/).  Without that
-# check, ctrl+f to close the view would leave a stray / in the prompt.
-#
-# Open or not is read off the bottom two lines of the screen (two in case a
-# tmux status bar sits under it; tmux on cumin draws it blank).  In the view
-# it is either the footer ("Showing detailed transcript · ctrl+o to toggle ...") or
-# the search input ("/query"); in the chat it is the status line, and a /
-# typed at the prompt shows as "❯ /", so it never starts with a /.
+# ctrl+f in a Claude Code window (see kitty.conf): search the conversation,
+# your messages and Claude's replies only, with claude-transcript (a "find:"
+# prompt, then less: n / N, q closes).
+#   local claude: claude-transcript in an overlay over the window.
+#   claude in tmux on cumin: prefix F, which opens it in a tmux popup there,
+#   where that session's transcript file lives (see tmux/.tmux.conf).
 # Run by kitty's remote_control_script, so `kitty @` reaches the right kitty
 # (it gets no window id: only `launch` fills in @active-kitty-window-id).
 win="--match=state:focused"
-last=$(kitty @ get-text "$win" | grep -v '^[[:space:]]*$' | tail -n 2)
-kitty @ send-key "$win" ctrl+o
-if ! printf '%s\n' "$last" | grep -qE 'Showing detailed transcript ·|^[[:space:]]*/'; then
-    kitty @ send-text "$win" /
+pid=$(kitty @ ls "$win" | python3 -c '
+import json, os, sys
+for os_win in json.load(sys.stdin):
+    for tab in os_win["tabs"]:
+        for w in tab["windows"]:
+            for p in w.get("foreground_processes", []):
+                # a local claude has ~/.claude/sessions/<pid>.json
+                if os.path.exists(os.path.expanduser("~/.claude/sessions/%d.json" % p["pid"])):
+                    print(p["pid"]); sys.exit()
+')
+if [ -n "$pid" ]; then
+    kitty @ launch "$win" --type=overlay --title "find in conversation" \
+        "$HOME/.local/bin/claude-transcript" --pid "$pid"
+else
+    kitty @ send-key "$win" ctrl+a
+    kitty @ send-text "$win" F
 fi

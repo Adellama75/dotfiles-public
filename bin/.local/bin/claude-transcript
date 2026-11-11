@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+"""Search a running Claude Code session's conversation, without tool output.
+
+Usage:
+  claude-transcript --pid <claude pid>
+  claude-transcript --pane-pid <pid>   (tmux #{pane_pid}: finds the claude under it)
+  claude-transcript --session <session id>
+
+Renders only your messages (including ones sent mid-turn) and Claude's
+replies from the session's transcript file, asks "find:", then opens it in
+less at the first hit: n / N next / previous, / new search, q closes.
+An empty query opens it at the end.  ctrl+f in kitty runs this (see
+kitty/.config/kitty/claude-find): as an overlay for a local claude, in a tmux
+popup for one in tmux on cumin.
+"""
+import glob
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from datetime import datetime
+
+CLAUDE = os.path.expanduser("~/.claude")
+YOU = "\x1b[1;38;2;240;160;75m"     # orange
+CLAUDE_C = "\x1b[1;38;2;203;166;247m"  # mauve
+DIM = "\x1b[2m"
+RESET = "\x1b[0m"
+ERE_SPECIAL = set("\\.^$*+?()[]{}|")
+
+
+def children(pid):
+    try:
+        with open(f"/proc/{pid}/task/{pid}/children") as f:
+            return [int(c) for c in f.read().split()]
+    except OSError:
+        return []
+
+
+def find_claude(pid):
+    """The first claude at or below pid (breadth-first).
+
+    A running claude is recognised by its ~/.claude/sessions/<pid>.json
+    rather than by name: the process may be called claude or by its version.
+    """
+    queue = [pid]
+    while queue:
+        p = queue.pop(0)
+        if os.path.exists(f"{CLAUDE}/sessions/{p}.json"):
+            return p
+        queue += children(p)
+    return None
+
+
+def session_file(args):
+    if args[0] == "--session":
+        sid = args[1]
+    else:
+        pid = int(args[1])
+        if args[0] == "--pane-pid":
+            pid = find_claude(pid)
+            if pid is None:
+                sys.exit("no claude running in this pane")
+        with open(f"{CLAUDE}/sessions/{pid}.json") as f:
+            sid = json.load(f)["sessionId"]
+    hits = glob.glob(f"{CLAUDE}/projects/*/{sid}.jsonl")
+    if not hits:
+        sys.exit(f"no transcript for session {sid}")
+    return hits[0]
+
+
+def user_text(content):
+    if isinstance(content, str):
+        parts = [content]
+    else:
+        parts = [p.get("text", "") for p in content if p.get("type") == "text"]
+    text = "\n".join(parts).strip()
+    if text.startswith("<command-name>"):  # a slash command: show it as typed
+        name = text.split("<command-name>")[1].split("</command-name>")[0]
+        args = text.split("<command-args>")[1].split("</command-args>")[0] \
+            if "<command-args>" in text else ""
+        return f"{name} {args}".strip()
+    if text.startswith(("<local-command-", "<system-reminder>", "<bash-")):
+        return ""
+    return text
+
+
+def turns(path):
+    """(speaker, timestamp, text) for each message, in order."""
+    with open(path) as f:
+        for line in f:
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            if e.get("isSidechain") or e.get("isMeta"):
+                continue
+            kind, ts = e.get("type"), e.get("timestamp")
+            if kind == "user":
+                text = user_text(e["message"]["content"])
+                if text:
+                    yield "you", ts, text
+            elif kind == "assistant":
+                content = e["message"].get("content") or []
+                text = "\n".join(p["text"] for p in content
+                                 if p.get("type") == "text").strip()
+                if text:
+                    yield "claude", ts, text
+            elif kind == "attachment":
+                a = e.get("attachment") or {}
+                if a.get("type") == "queued_command" and a.get("prompt"):
+                    yield "you", ts, str(a["prompt"]).strip()
+
+
+def when(ts):
+    try:
+        t = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone()
+    except (AttributeError, ValueError):
+        return ""
+    return t.strftime("%a %d %b %H:%M")
+
+
+def render(path):
+    out, last = [], None
+    for speaker, ts, text in turns(path):
+        if speaker != last:
+            colour = YOU if speaker == "you" else CLAUDE_C
+            out.append(f"\n{colour}── {speaker}{RESET} {DIM}{when(ts)}{RESET}\n")
+            last = speaker
+        out.append(text + "\n")
+    return "\n".join(out).lstrip("\n")
+
+
+def main():
+    args = sys.argv[1:]
+    if len(args) != 2 or args[0] not in ("--pid", "--pane-pid", "--session"):
+        sys.exit(__doc__)
+    text = render(session_file(args))
+    try:
+        import readline  # noqa: F401  (line editing for input())
+        query = input("find: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return 0
+    # -i: smart case; -j.3: put a hit a third of the way down, context above
+    less = ["less", "-R", "-i", "-j.3",
+            "--prompt=s n next · N previous · / search · q close "]
+    if query:
+        less += ["-p", "".join("\\" + c if c in ERE_SPECIAL else c for c in query)]
+    else:
+        less += ["+G"]
+    with tempfile.NamedTemporaryFile("w", suffix=".txt",
+                                     dir=os.environ.get("XDG_RUNTIME_DIR")) as f:
+        f.write(text)
+        f.flush()
+        subprocess.run(less + [f.name])
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except SystemExit as e:
+        if isinstance(e.code, str):  # an error: keep the overlay / popup open
+            print(e.code)
+            try:
+                input("press Enter to close ")
+            except (EOFError, KeyboardInterrupt):
+                pass
+            sys.exit(1)
+        raise
