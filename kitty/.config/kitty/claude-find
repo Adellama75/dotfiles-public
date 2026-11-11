@@ -8,8 +8,9 @@
 # it is either the footer ("Showing detailed transcript · ctrl+o to toggle ...") or
 # the search input ("/query"); in the chat it is the status line, and a /
 # typed at the prompt shows as "❯ /", so it never starts with a /.
-# Run by kitty's remote_control_script, so `kitty @` reaches the right kitty.
-win="--match=id:$1"
+# Run by kitty's remote_control_script, so `kitty @` reaches the right kitty
+# (it gets no window id: only `launch` fills in @active-kitty-window-id).
+win="--match=state:focused"
 last=$(kitty @ get-text "$win" | grep -v '^[[:space:]]*$' | tail -n 2)
 kitty @ send-key "$win" ctrl+o
 if ! printf '%s\n' "$last" | grep -qE 'Showing detailed transcript ·|^[[:space:]]*/'; then
