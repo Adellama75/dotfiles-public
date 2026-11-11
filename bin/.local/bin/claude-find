@@ -1,0 +1,17 @@
+#!/bin/sh
+# ctrl+f in a Claude Code window (see kitty.conf): toggle the transcript view
+# (ctrl+o) and, only when opening it, start its search (/).  Without that
+# check, ctrl+f to close the view would leave a stray / in the prompt.
+#
+# Open or not is read off the bottom two lines of the screen (two in case a
+# tmux status bar sits under it; tmux on cumin draws it blank).  In the view
+# it is either the footer ("Showing detailed transcript · ctrl+o to toggle ...") or
+# the search input ("/query"); in the chat it is the status line, and a /
+# typed at the prompt shows as "❯ /", so it never starts with a /.
+# Run by kitty's remote_control_script, so `kitty @` reaches the right kitty.
+win="--match=id:$1"
+last=$(kitty @ get-text "$win" | grep -v '^[[:space:]]*$' | tail -n 2)
+kitty @ send-key "$win" ctrl+o
+if ! printf '%s\n' "$last" | grep -qE 'Showing detailed transcript ·|^[[:space:]]*/'; then
+    kitty @ send-text "$win" /
+fi
