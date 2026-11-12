@@ -2,13 +2,20 @@
 # Show the Chrome that runs on cumin as an ordinary window on this machine.
 # Chrome lives in an xpra session (display :100, user service xpra-chrome.service on cumin);
 # closing the window here only detaches, Chrome keeps running there.
+# Transport is QUIC (UDP 10100 on cumin's tailscale address): unlike ssh/TCP, one lost packet
+# does not stall everything behind it, which matters on poor wifi. The server certificate and
+# password live in ~/.config/xpra/quic on both machines (not in dotfiles).
 # Encoding favours speed over sharpness (min-speed, quality 60): the link is usually wifi or a tethered phone.
-#   cumin-chrome          attach (does nothing if already attached)
+#   cumin-chrome          attach over QUIC (does nothing if already attached)
+#   cumin-chrome ssh      attach over ssh instead (fallback if UDP is blocked)
 #   cumin-chrome detach   close the window(s) here
+q="$HOME/.config/xpra/quic"
 case "$1" in
-    detach) pkill -f '[x]pra attach ssh://cumin/100'; exit 0 ;;
+    detach) pkill -f '[x]pra attach (ssh|quic)://.*cumin'; exit 0 ;;
+    ssh) set -- ssh://cumin/100 --ssh=/usr/bin/ssh ;;
+    *) set -- quic://ada@cumin:10100/ --ssl-ca-certs="$q/cert.pem" --ssl-server-hostname=cumin --password-file="$q/password" ;;
 esac
-pgrep -f '[x]pra attach ssh://cumin/100' >/dev/null && { echo "already attached"; exit 0; }
-setsid nohup xpra attach ssh://cumin/100 --ssh=/usr/bin/ssh --audio=no --notifications=no --mdns=no \
+pgrep -f '[x]pra attach (ssh|quic)://.*cumin' >/dev/null && { echo "already attached"; exit 0; }
+setsid nohup xpra attach "$@" --audio=no --notifications=no --mdns=no \
     --min-speed=80 --quality=60 --bandwidth-detection=yes \
     >"${XDG_RUNTIME_DIR:-/tmp}/cumin-chrome.log" 2>&1 &
