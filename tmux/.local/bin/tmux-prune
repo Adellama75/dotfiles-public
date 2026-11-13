@@ -25,6 +25,8 @@
 #     lost: `claude -c` / --resume brings the conversation back, and
 #     claude-resurrect restores it after a reboot.
 # Anything else — a job, a server, ssh, a running monitor — keeps its session.
+# So does a session with the @keep option (`tmux set @keep 1` inside it): a
+# long-running Claude that idles between events, e.g. one woken by a plugin.
 set -u
 dry= mode=detached cid=
 while [ $# -gt 0 ]; do
@@ -49,6 +51,7 @@ log() { echo "$*"; logger -t tmux-prune -- "[$mode] $*"; }
 
 kill_session() {   # $1 session, $2 reason
     local name; name=$(tmux display -p -t "$1" '#S' 2>/dev/null) || return
+    [ -n "$(tmux show -qv -t "$1" @keep)" ] && return   # tmux set -t <session> @keep 1: never prune it
     if [ -n "$dry" ]; then log "would kill $name ($2)"
     else tmux kill-session -t "$1" && log "pruned $name ($2)"; fi
 }
