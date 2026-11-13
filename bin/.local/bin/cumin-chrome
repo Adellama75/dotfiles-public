@@ -6,6 +6,8 @@
 # does not stall everything behind it, which matters on poor wifi. The server certificate and
 # password live in ~/.config/xpra/quic on both machines (not in dotfiles).
 # Encoding favours speed over sharpness (min-speed, quality 60): the link is usually wifi or a tethered phone.
+# --desktop-scaling=2: cumin renders at half this HiDPI screen's resolution and the picture is doubled here,
+# so each frame has a quarter of the pixels to encode and send (at full size it managed about 2 frames a second).
 #   cumin-chrome          attach over QUIC (does nothing if already attached)
 #   cumin-chrome ssh      attach over ssh instead (fallback if UDP is blocked)
 #   cumin-chrome detach   close the window(s) here
@@ -17,5 +19,5 @@ case "$1" in
 esac
 pgrep -f '[x]pra attach (ssh|quic)://.*cumin' >/dev/null && { echo "already attached"; exit 0; }
 setsid nohup xpra attach "$@" --audio=no --notifications=no --mdns=no \
-    --min-speed=80 --quality=60 --bandwidth-detection=yes \
+    --min-speed=80 --quality=60 --bandwidth-detection=yes --desktop-scaling=2 \
     >"${XDG_RUNTIME_DIR:-/tmp}/cumin-chrome.log" 2>&1 &
