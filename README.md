@@ -7,8 +7,9 @@ and a `bin` package of small scripts: `clp` copies files/stdin to the clipboard 
 `sshpaste` pastes a clipboard image into a Claude Code prompt running over ssh+tmux,
 `airdrop` sends/receives files with Apple devices via OWL + OpenDrop,
 `sioyek-copy-on-select` mirrors sioyek's mouse selection into the clipboard so ctrl+v works; needs python3-xlib, xinput, xclip).
-`claude-transcript` searches a running Claude Code session's conversation (your messages and its replies, no tool output) in less;
-ctrl+f in a kitty Claude window opens it, as an overlay or, on cumin, a tmux popup (`kitty/.config/kitty/claude-find`, `prefix F` in `tmux/.tmux.conf`).
+`claude-transcript` shows a running Claude Code session's conversation (your messages and its replies, no tool output) in less.
+`claude-mods/` is not a stow package: it holds Claude Code mods, added once with `claude plugin marketplace add ~/dotfiles-public/claude-mods` and `claude plugin install find@ada-mods`.
+`find` is ctrl+f in a kitty Claude window: a find bar above the prompt, matches highlighted in place, Enter / shift+Enter to step, Esc to close (needs python3).
 Personal config lives in a separate private repo.
 
 Each top-level directory is a [GNU Stow](https://www.gnu.org/software/stow/) package that mirrors `~`:

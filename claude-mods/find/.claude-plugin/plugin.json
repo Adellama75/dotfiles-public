@@ -1,0 +1,7 @@
+{
+  "name": "find",
+  "version": "1.0.0",
+  "description": "ctrl+f: find in the conversation (your messages and Claude's replies, not tool output), highlighted in place; Enter / shift+Enter step, Esc closes",
+  "author": { "name": "ada" },
+  "types": "./types/index.d.ts"
+}

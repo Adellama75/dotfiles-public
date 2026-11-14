@@ -9,9 +9,8 @@ Usage:
 Renders only your messages (including ones sent mid-turn) and Claude's
 replies from the session's transcript file, asks "find:", then opens it in
 less at the first hit: n / N next / previous, / new search, q closes.
-An empty query opens it at the end.  ctrl+f in kitty runs this (see
-kitty/.config/kitty/claude-find): as an overlay for a local claude, in a tmux
-popup for one in tmux on cumin.
+An empty query opens it at the end.  A standalone viewer: ctrl+f in kitty is
+the `find` mod now (claude-mods/find), which searches in place.
 """
 import glob
 import json

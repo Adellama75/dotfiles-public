@@ -1,0 +1,5 @@
+{
+  "name": "ada-mods",
+  "owner": { "name": "ada" },
+  "plugins": [{ "name": "find", "source": "./find" }]
+}
