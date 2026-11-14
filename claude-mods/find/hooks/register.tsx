@@ -5,9 +5,9 @@ import type { Hit, Search } from '../types'
 
 // ctrl+f: find in the conversation.  A bar opens above the prompt; every match
 // in your messages and Claude's replies is highlighted in place as you type
-// (tool output is never searched: only message rows are).  Enter goes to the
-// next hit, oldest first, shift+Enter to the previous one, Esc closes the bar
-// and clears the highlights.
+// (tool output is never searched: only message rows are).  Enter or Down goes
+// to the next hit, oldest first; shift+Enter or Up to the previous one; Esc
+// closes the bar and clears the highlights.
 
 const TRIGGER = '\uE0CF'
 const NONE: Search = { isOpen: false, query: '', hits: [], current: -1 }
@@ -230,11 +230,24 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // Up and Down in the field move the focus to the control before or after
+  // it (so do shift+Tab and Tab: the engine reports the four alike).  Those
+  // two controls are the bar's "previous" and "next" marks: take the move as
+  // a step, and keep the focus in the field.  (A click on a mark is such a
+  // move too, so the marks' own presses do nothing more.)
+  on('ui.focus', async ($, e, next) => {
+    const isStep =
+      e.origin.kind === 'person' && (e.element === 'previous' || e.element === 'next')
+    if (!isStep || !(await read($, search)).isOpen) return next(e)
+    await step($, e.element === 'next' ? 1 : -1)
+    return {}
+  })
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const now = await read($, search)
     if (!now.isOpen || e.props.hasSurvey) return next(e)
     band = e.requestId
-    const { Box, Input, Text } = $.ui.resolve(e)
+    const { Box, Button, Input, Text } = $.ui.resolve(e)
     const total = now.hits.length
     // The field empties on Enter, so the query is named beside the count.
     const where = !now.query
@@ -246,7 +259,10 @@ export const register: Register = on => {
           : `"${now.query}" ${now.current + 1}/${total}`
 
     return (
-      <Box flexDirection="row" gap={2}>
+      <Box flexDirection="row" gap={1}>
+        <Button key="previous" plain onPress={() => {}}>
+          ↑
+        </Button>
         <Input
           key="query"
           label="find"
@@ -269,8 +285,11 @@ export const register: Register = on => {
             await step($, 1)
           }}
         />
+        <Button key="next" plain onPress={() => {}}>
+          ↓
+        </Button>
         <Text dimColor>{where}</Text>
-        <Text dimColor>shift+enter previous · esc close</Text>
+        <Text dimColor>esc close</Text>
       </Box>
     )
   })
