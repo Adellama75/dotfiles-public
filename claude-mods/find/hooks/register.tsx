@@ -40,10 +40,18 @@ const look = (piece: Piece) => ({
       : {}),
 })
 
+/**
+ * Whether a drawn row is the transcript message `id` names.  The engine names
+ * a row by the message's uuid, but for some rows with its last group zeroed
+ * (8129bb46-9d65-46e5-bd8e-000000000000 for ...-5a26282378d0), so the two are
+ * compared without that group.
+ */
+const isRow = (id: string, rowId: string) => id.slice(0, 24) === rowId.slice(0, 24)
+
 /** Which match of a row is the selected one: its index there, or -1. */
 const selectedIn = (now: Search, rowId: string) => {
   const hit = now.hits[now.current]
-  return hit && hit.id === rowId ? hit.n : -1
+  return hit && isRow(hit.id, rowId) ? hit.n : -1
 }
 
 // Reads the session's transcript file and prints one {id, role, text} JSON line per
@@ -231,13 +239,17 @@ export const register: Register = on => {
     const { Box, Button, Input, Text } = $.ui.resolve(e)
     const total = now.hits.length
     // The field empties on Enter, so the query is named beside the count.
+    // On a narrow window the bar keeps to one line: the count alone, no hint.
+    const isNarrow = e.props.bodyColumns < 76
     const where = !now.query
       ? ''
       : total === 0
         ? 'no matches'
         : now.current < 0
           ? `${total} found`
-          : `"${now.query}" ${now.current + 1}/${total}`
+          : isNarrow
+            ? `${now.current + 1}/${total}`
+            : `"${now.query}" ${now.current + 1}/${total}`
 
     return (
       <Box flexDirection="row" gap={1}>
@@ -266,7 +278,7 @@ export const register: Register = on => {
           }}
         />
         <Text dimColor>{where}</Text>
-        <Text dimColor>shift+enter previous · esc close</Text>
+        {isNarrow ? [] : [<Text dimColor>shift+enter previous · esc close</Text>]}
         <Button key="leave-after" plain onPress={() => close($)}>
           ✕
         </Button>
@@ -314,9 +326,7 @@ export const register: Register = on => {
           {blocks(e.props.text).map(block => {
             const drawn = parse(block)
             if (!hasMatch(drawn, now.query)) return <Markdown text={block} />
-            return (
-              <Box flexDirection="column">
-                {drawn.flatMap(one =>
+            const lines = drawn.flatMap(one =>
                   one.kind === 'table'
                     ? grid(one, now.query, tally, columns).map(line => (
                         <Text wrap="truncate-end">{draw(line)}</Text>
@@ -328,7 +338,10 @@ export const register: Register = on => {
                             : [<Text>{draw(mark(one.spans, now.query, tally))}</Text>]}
                         </Box>,
                       ],
-                )}
+            )
+            return (
+              <Box flexDirection="column">
+                {lines}
               </Box>
             )
           })}
