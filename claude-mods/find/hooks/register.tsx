@@ -2,12 +2,16 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Hit, Search } from '../types'
+import { blocks, countIn, grid, hasMatch, mark, parse, ranges } from './markdown'
+import type { Piece, Tally } from './markdown'
 
 // ctrl+f: find in the conversation.  A bar opens above the prompt; every match
-// in your messages and Claude's replies is highlighted in place as you type
-// (tool output is never searched: only message rows are).  Enter or Down goes
-// to the next hit, oldest first; shift+Enter or Up to the previous one; Esc
-// closes the bar and clears the highlights.
+// in your messages and Claude's replies is highlighted in place as you type.
+// Tool output is never searched (only message rows are), and a reply is
+// searched as it reads once drawn, not as its markdown source: `*` does not
+// find the stars around bold text.  Enter or Down goes to the next hit, oldest
+// first; shift+Enter or Up to the previous one; Esc closes the bar and clears
+// the highlights.
 
 const TRIGGER = '\uE0CF'
 const NONE: Search = { isOpen: false, query: '', hits: [], current: -1 }
@@ -18,49 +22,23 @@ const SELECTED = '#F0A04B'
 const OTHER = '#F9E2AF'
 const INK = '#151520'
 
-type Message = { id: string; text: string }
+// Inline code and code blocks, as the engine colours them.
+const CODE = 'permission'
 
-// Lowercase query: ignore case.  A capital in it: match case.
-const matcher = (query: string) => {
-  const isExact = query !== query.toLowerCase()
-  const needle = isExact ? query : query.toLowerCase()
-  return (text: string) => (isExact ? text : text.toLowerCase()).indexOf(needle)
-}
+type Message = { id: string; role: 'user' | 'assistant'; text: string }
 
-const has = (text: string, query: string) => matcher(query)(text) >= 0
-
-/** `text` cut into [plain, match, plain, match, ..., plain]. */
-const cut = (text: string, query: string): string[] => {
-  const isExact = query !== query.toLowerCase()
-  const hay = isExact ? text : text.toLowerCase()
-  const needle = isExact ? query : query.toLowerCase()
-  const parts: string[] = []
-  let from = 0
-  for (;;) {
-    const at = hay.indexOf(needle, from)
-    if (at < 0) break
-    parts.push(text.slice(from, at), text.slice(at, at + needle.length))
-    from = at + needle.length
-  }
-  parts.push(text.slice(from))
-  return parts
-}
-
-/** A reply's markdown as blocks: blank-line separated, a code fence kept whole. */
-const blocks = (markdown: string): string[] => {
-  const out: string[] = []
-  let block: string[] = []
-  let isFenced = false
-  for (const line of markdown.split('\n')) {
-    if (/^\s*(```|~~~)/.test(line)) isFenced = !isFenced
-    if (!isFenced && line.trim() === '') {
-      if (block.length) out.push(block.join('\n'))
-      block = []
-    } else block.push(line)
-  }
-  if (block.length) out.push(block.join('\n'))
-  return out
-}
+/** A piece's Text props: its style, and a match's paint over it. */
+const look = (piece: Piece) => ({
+  ...(piece.bold ? { bold: true } : {}),
+  ...(piece.italic ? { italic: true } : {}),
+  ...(piece.strike ? { strikethrough: true } : {}),
+  ...(piece.dim ? { dimColor: true } : {}),
+  ...(piece.mark
+    ? { color: INK, backgroundColor: piece.mark === 'selected' ? SELECTED : OTHER }
+    : piece.code
+      ? { color: CODE }
+      : {}),
+})
 
 /** Which match of a row is the selected one: its index there, or -1. */
 const selectedIn = (now: Search, rowId: string) => {
@@ -68,7 +46,7 @@ const selectedIn = (now: Search, rowId: string) => {
   return hit && hit.id === rowId ? hit.n : -1
 }
 
-// Reads the session's transcript file and prints one {id, text} JSON line per
+// Reads the session's transcript file and prints one {id, role, text} JSON line per
 // message row of yours or Claude's.  A helper process does it because the
 // file outgrows what $.fs.read takes (4 MiB) in a long session, while the
 // messages alone stay small.  argv[1] is the session id.
@@ -104,7 +82,8 @@ for line in open(paths[0]) if paths else []:
         continue  # a torn last line
     text = said(e)
     if text and e.get("uuid"):
-        print(json.dumps({"id": e["uuid"], "text": text}))
+        role = "assistant" if e.get("type") == "assistant" else "user"
+        print(json.dumps({"id": e["uuid"], "role": role, "text": text}))
 `
 
 // The session's messages, read from its transcript file when the bar opens.
@@ -129,14 +108,17 @@ const load = async ($: EngineInterface) => {
   messages = list
 }
 
-/** How many times `query` occurs in `text`. */
-const count = (text: string, query: string) => (cut(text, query).length - 1) / 2
+/** How many matches a message row draws: a reply's in its visible text. */
+const count = (message: Message, query: string) =>
+  message.role === 'assistant'
+    ? countIn(message.text, query)
+    : ranges(message.text, query).length
 
 /** Every match in the session, oldest first: its message row and which one in it. */
 const hitsFor = (query: string): Hit[] =>
   query
     ? messages.flatMap(m =>
-        Array.from({ length: count(m.text, query) }, (_, n) => ({ id: m.id, n })),
+        Array.from({ length: count(m, query) }, (_, n) => ({ id: m.id, n })),
       )
     : []
 
@@ -297,26 +279,17 @@ export const register: Register = on => {
   on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
     const now = await read($, search)
     const isPlain = !e.props.task && !e.props.from
-    if (!now.query || !isPlain || !has(e.props.text, now.query)) return next(e)
+    if (!now.query || !isPlain || !ranges(e.props.text, now.query).length) return next(e)
     const { Box, Text } = $.ui.resolve(e)
-    const selected = selectedIn(now, e.requestId)
+    const tally: Tally = { seen: 0, selected: selectedIn(now, e.requestId) }
 
     return (
       <Box flexDirection="row">
         <Text dimColor>❯ </Text>
         <Text>
-          {cut(e.props.text, now.query).map((part, i) =>
-            i % 2 ? (
-              <Text
-                backgroundColor={(i - 1) / 2 === selected ? SELECTED : OTHER}
-                color={INK}
-              >
-                {part}
-              </Text>
-            ) : (
-              part
-            ),
-          )}
+          {mark([{ text: e.props.text }], now.query, tally).map(piece => (
+            <Text {...look(piece)}>{piece.text}</Text>
+          ))}
         </Text>
       </Box>
     )
@@ -324,37 +297,43 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
     const now = await read($, search)
-    if (!now.query || !has(e.props.text, now.query)) return next(e)
+    if (!now.query || !countIn(e.props.text, now.query)) return next(e)
     const { Box, Markdown, Text } = $.ui.resolve(e)
-    const selected = selectedIn(now, e.requestId)
-    let seen = 0 // matches drawn so far in this row, in reading order
+    const tally: Tally = { seen: 0, selected: selectedIn(now, e.requestId) }
+    const columns = Math.max(30, (e.viewport?.columns ?? 100) - 4)
+    const draw = (pieces: Piece[]) =>
+      pieces.length
+        ? pieces.map(piece => <Text {...look(piece)}>{piece.text}</Text>)
+        : ' '
 
-    // A block holding a match is drawn as its source with the match painted;
-    // every other block keeps its markdown.
+    // A block holding a match is drawn here, formatted as the engine would
+    // (bold, code, lists, a table's grid) with the match painted over it;
+    // every other block is left to the engine's own markdown.
     return (
       <Box flexDirection="row">
         <Text>{e.props.isFirstOfReply ? '● ' : '  '}</Text>
         <Box flexDirection="column" gap={1}>
-          {blocks(e.props.text).map(block =>
-            has(block, now.query) ? (
-              <Text>
-                {cut(block, now.query).map((part, i) =>
-                  i % 2 ? (
-                    <Text
-                      backgroundColor={seen++ === selected ? SELECTED : OTHER}
-                      color={INK}
-                    >
-                      {part}
-                    </Text>
-                  ) : (
-                    part
-                  ),
+          {blocks(e.props.text).map(block => {
+            const drawn = parse(block)
+            if (!hasMatch(drawn, now.query)) return <Markdown text={block} />
+            return (
+              <Box flexDirection="column">
+                {drawn.flatMap(one =>
+                  one.kind === 'table'
+                    ? grid(one, now.query, tally, columns).map(line => (
+                        <Text wrap="truncate-end">{draw(line)}</Text>
+                      ))
+                    : [
+                        <Box flexDirection="row">
+                          {one.prefix
+                            ? [<Text>{one.prefix}</Text>, <Text>{draw(mark(one.spans, now.query, tally))}</Text>]
+                            : [<Text>{draw(mark(one.spans, now.query, tally))}</Text>]}
+                        </Box>,
+                      ],
                 )}
-              </Text>
-            ) : (
-              <Markdown text={block} />
-            ),
-          )}
+              </Box>
+            )
+          })}
         </Box>
       </Box>
     )
