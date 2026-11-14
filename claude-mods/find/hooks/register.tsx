@@ -9,9 +9,9 @@ import type { Piece, Tally } from './markdown'
 // in your messages and Claude's replies is highlighted in place as you type.
 // Tool output is never searched (only message rows are), and a reply is
 // searched as it reads once drawn, not as its markdown source: `*` does not
-// find the stars around bold text.  Enter or Down goes to the next hit, oldest
-// first; shift+Enter or Up to the previous one; Esc closes the bar and clears
-// the highlights.
+// find the stars around bold text.  Enter goes to the next hit, oldest first;
+// shift+Enter to the previous one; Esc or Tab closes the bar and clears the
+// highlights.
 
 const TRIGGER = '\uE0CF'
 const NONE: Search = { isOpen: false, query: '', hits: [], current: -1 }
@@ -181,7 +181,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'find',
-      description: 'Find in the conversation (also ctrl+f): Enter / shift+Enter step, Esc closes',
+      description: 'Find in the conversation (also ctrl+f): Enter / shift+Enter step, Esc or Tab closes',
     })
     // A bar left open by an earlier load has no watch: start closed.
     if ((await read($, search)).isOpen) await update($, search, () => NONE)
@@ -212,16 +212,15 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // Up and Down in the field move the focus to the control before or after
-  // it (so do shift+Tab and Tab: the engine reports the four alike).  Those
-  // two controls are the bar's "previous" and "next" marks: take the move as
-  // a step, and keep the focus in the field.  (A click on a mark is such a
-  // move too, so the marks' own presses do nothing more.)
+  // Tab leaves the bar, as Esc does.  It reaches the mod as the focus moving
+  // off the field onto the control after it (shift+Tab, Up and Down move it
+  // the same way: the engine reports them alike, and it lets no scroll answer
+  // such a move, so they cannot step).  The field sits between two controls,
+  // the "find:" label and the close mark, so there is somewhere to move to.
   on('ui.focus', async ($, e, next) => {
-    const isStep =
-      e.origin.kind === 'person' && (e.element === 'previous' || e.element === 'next')
-    if (!isStep || !(await read($, search)).isOpen) return next(e)
-    await step($, e.element === 'next' ? 1 : -1)
+    const isLeaving = e.origin.kind === 'person' && e.element !== 'query'
+    if (!isLeaving || e.requestId !== band || !(await read($, search)).isOpen) return next(e)
+    await close($)
     return {}
   })
 
@@ -242,12 +241,11 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="row" gap={1}>
-        <Button key="previous" plain onPress={() => {}}>
-          ↑
+        <Button key="leave-before" plain onPress={() => close($)}>
+          find:
         </Button>
         <Input
           key="query"
-          label="find"
           value={now.query}
           autoFocus
           submitLabel="next"
@@ -267,11 +265,11 @@ export const register: Register = on => {
             await step($, 1)
           }}
         />
-        <Button key="next" plain onPress={() => {}}>
-          ↓
-        </Button>
         <Text dimColor>{where}</Text>
-        <Text dimColor>esc close</Text>
+        <Text dimColor>shift+enter previous · esc close</Text>
+        <Button key="leave-after" plain onPress={() => close($)}>
+          ✕
+        </Button>
       </Box>
     )
   })
