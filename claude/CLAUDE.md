@@ -67,7 +67,7 @@ is not an ancestor of the test. Run it in a directory claude already trusts
 
 Auto-pull every 15 min runs `stow -R claude` + `register-hooks.sh`:
 - cumin: `dotfiles-pull.service`/`.timer` (private repo, `systemd-cumin`)
-- bigpc-wsl: same, from `systemd-bigpc` (linger on)
+- moose-wsl (was bigpc-wsl): same, from `systemd-bigpc` (linger on)
 - galangal (Termux): crontab → `~/.local/bin/dotfiles-pull` (plain file, not stowed)
 - lavender: manual `git pull` (it's the editing machine)
 
