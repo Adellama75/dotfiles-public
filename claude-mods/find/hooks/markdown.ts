@@ -337,3 +337,13 @@ export const grid = (table: Table, query: string, tally: Tally, columns: number)
   })
   return out
 }
+
+/** How many matches a block's visible text holds. */
+export const matchesIn = (drawn: Drawn[], query: string) =>
+  units(drawn).reduce((sum, unit) => sum + ranges(visible(unit), query).length, 0)
+
+/** About how many rows a block takes in `columns` columns (its markers count as text). */
+export const rowsOf = (block: string, columns: number) =>
+  block
+    .split('\n')
+    .reduce((sum, line) => sum + Math.max(1, Math.ceil(width(line) / Math.max(1, columns))), 0)

@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Hit, Search } from '../types'
-import { blocks, countIn, grid, hasMatch, mark, parse, ranges } from './markdown'
+import { blocks, countIn, grid, mark, matchesIn, parse, ranges, rowsOf } from './markdown'
 import type { Piece, Tally } from './markdown'
 
 // ctrl+f: find in the conversation.  A bar opens above the prompt; every match
@@ -316,6 +316,29 @@ export const register: Register = on => {
         ? pieces.map(piece => <Text {...look(piece)}>{piece.text}</Text>)
         : ' '
 
+    // A reply taller than the window shows its top, wherever in it the engine
+    // was asked to go.  So when the selected match lies far down its reply,
+    // the blocks above it fold into one dim line while it is selected, which
+    // puts the match near the top: the part that shows.
+    const list = blocks(e.props.text)
+    const parsed = list.map(parse)
+    const counts = parsed.map(drawn => matchesIn(drawn, now.query))
+    let holder = -1 // the block holding the selected match
+    for (let i = 0, seen = 0; i < counts.length && tally.selected >= 0; i++) {
+      seen += counts[i] ?? 0
+      if (tally.selected < seen) {
+        holder = i
+        break
+      }
+    }
+    const heights = list.map(block => rowsOf(block, columns))
+    const rows = e.viewport?.rows ?? 40
+    const above = heights.slice(0, Math.max(0, holder)).reduce((sum, h) => sum + h + 1, 0)
+    let folded = 0 // how many leading blocks are folded away
+    if (holder > 0 && above > rows * 0.4)
+      // Keep the block just above as context when it is short.
+      folded = (heights[holder - 1] ?? 0) <= rows * 0.25 ? holder - 1 : holder
+
     // A block holding a match is drawn here, formatted as the engine would
     // (bold, code, lists, a table's grid) with the match painted over it;
     // every other block is left to the engine's own markdown.
@@ -323,9 +346,16 @@ export const register: Register = on => {
       <Box flexDirection="row">
         <Text>{e.props.isFirstOfReply ? '● ' : '  '}</Text>
         <Box flexDirection="column" gap={1}>
-          {blocks(e.props.text).map(block => {
-            const drawn = parse(block)
-            if (!hasMatch(drawn, now.query)) return <Markdown text={block} />
+          {folded > 0
+            ? [<Text dimColor>⋯ {folded} {folded === 1 ? 'paragraph' : 'paragraphs'} above</Text>]
+            : []}
+          {list.flatMap((block, i) => {
+            const drawn = parsed[i] ?? []
+            if (i < folded) {
+              tally.seen += counts[i] ?? 0 // its matches still count
+              return []
+            }
+            if (!counts[i]) return [<Markdown text={block} />]
             const lines = drawn.flatMap(one =>
                   one.kind === 'table'
                     ? grid(one, now.query, tally, columns).map(line => (
@@ -339,11 +369,7 @@ export const register: Register = on => {
                         </Box>,
                       ],
             )
-            return (
-              <Box flexDirection="column">
-                {lines}
-              </Box>
-            )
+            return [<Box flexDirection="column">{lines}</Box>]
           })}
         </Box>
       </Box>
