@@ -10,6 +10,7 @@ and a `bin` package of small scripts: `clp` copies files/stdin to the clipboard 
 `claude-transcript` shows a running Claude Code session's conversation (your messages and its replies, no tool output) in less.
 `claude-mods/` is not a stow package: it holds Claude Code mods, added once with `claude plugin marketplace add ~/dotfiles-public/claude-mods` and `claude plugin install find@ada-mods`.
 `find` is ctrl+f in a kitty Claude window: a find bar above the prompt, matches highlighted in place, Enter / shift+Enter to step, Esc or Tab to close (needs python3).
+`hyfetch` is the fetch config (lesbian flag, vertical); the binary comes from `packages/apt.txt`, or `pip install hyfetch` on Termux.
 Personal config lives in a separate private repo.
 
 Each top-level directory is a [GNU Stow](https://www.gnu.org/software/stow/) package that mirrors `~`:

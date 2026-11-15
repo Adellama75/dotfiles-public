@@ -10,6 +10,7 @@ gh
 git
 git-delta
 htop
+hyfetch
 jq
 ncdu
 neovim
