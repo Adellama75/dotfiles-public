@@ -38,6 +38,26 @@ const PREVIOUS_ACTION = 'app:diffFileListUp'
 const NONE: Search = { isOpen: false, query: '', hits: [], current: -1, field: 0 }
 const search = atom({ plugin: 'find', key: 'search' } as const, NONE)
 
+// The search as this module last set it.  The engine holds a message row back
+// until its hook answers, so the hook must answer fast: it decides from this
+// copy, with no round trip, whether the row holds a match, and passes at once
+// when it does not (every row, while no search is on).  Only a row holding a
+// match reads the atom, which is what gets it redrawn when the selection moves.
+let live: Search = NONE
+
+/**
+ * Change the search: this module's copy and the atom.  The atom's readers are
+ * redrawn by the write: the bar, the hint line, and the rows holding a match.
+ * `allRows` asks for every row to be drawn again, for a change of the query
+ * (rows with no match so far do not read the atom, so the write passes them
+ * by); it also drops the engine's kept drawings of rows now off screen.
+ */
+const mutate = async ($: EngineInterface, change: (now: Search) => Search, allRows = false) => {
+  live = change(live)
+  await update($, search, () => live)
+  if (allRows) $.ui.invalidate('ui.render')
+}
+
 // Colours: the selected hit orange, the others yellow, dark text on both.
 const SELECTED = '#F0A04B'
 const OTHER = '#F9E2AF'
@@ -105,13 +125,16 @@ def said(e):
             text = "\\n".join(p.get("text", "") for p in content if p.get("type") == "text")
         else:
             text = ""
-        return "" if text.startswith("<") else text  # a command's or the engine's row
+        # A command's row or a notice the engine wrote: tagged text, not a message.
+        return "" if text.lstrip().startswith("<") else text
     if kind == "assistant" and isinstance(content, list):
         return "\\n".join(p.get("text", "") for p in content if p.get("type") == "text")
     if kind == "attachment":
         a = e.get("attachment") or {}
         if a.get("type") == "queued_command":  # sent while a turn ran
-            return str(a.get("prompt") or "")
+            text = str(a.get("prompt") or "")
+            # The engine queues its own notices the same way: tagged text.
+            return "" if text.lstrip().startswith("<") else text
     return ""
 
 paths = glob.glob(os.path.expanduser("~/.claude/projects/*/" + sys.argv[1] + ".jsonl"))
@@ -163,16 +186,19 @@ const hitsFor = (query: string): Hit[] =>
     : []
 
 const setQuery = ($: EngineInterface, query: string) =>
-  update($, search, s => ({ ...s, isOpen: true, query, hits: hitsFor(query), current: -1 }))
+  mutate($, s => ({ ...s, isOpen: true, query, hits: hitsFor(query), current: -1 }), true)
 
-// True while a step is on its way: a key held down, or pressed again before
-// the chat has settled, is dropped rather than piled on top.
-let isStepping = false
+// When the step now on its way began (clock ms), 0 with none: a key held
+// down, or pressed again before the chat has settled, is dropped rather than
+// piled on top.  A step that has not finished in a second and a half is
+// taken for lost, so that it cannot hold up the search.
+let steppingSince = 0
 
 /** Select the next (+1) or previous (-1) hit, wrapping, and scroll to it. */
 const step = async ($: EngineInterface, by: 1 | -1) => {
-  if (isStepping) return
-  isStepping = true
+  const began = await $.clock.now()
+  if (began - steppingSince < 1500) return
+  steppingSince = began
   try {
     const now = await read($, search)
     const total = now.hits.length
@@ -182,7 +208,7 @@ const step = async ($: EngineInterface, by: 1 | -1) => {
     const target = now.hits[current]
     if (!target) return
     const key = rowKey(target.id)
-    await update($, search, s => ({ ...s, current }))
+    await mutate($, s => ({ ...s, current }))
     const answer = await $.ui.scroll({ to: { requestId: target.id }, block: 'center' })
     if (answer?.deny) {
       $.ui.toast(`find: could not scroll there (${answer.deny})`)
@@ -199,7 +225,7 @@ const step = async ($: EngineInterface, by: 1 | -1) => {
     }
     if (!landed) await $.ui.scroll({ to: { requestId: target.id }, block: 'center' })
   } finally {
-    isStepping = false
+    if (steppingSince === began) steppingSince = 0
   }
 }
 
@@ -243,7 +269,7 @@ const fieldKey = (now: Search) => `query-${now.field ?? 0}`
 
 /** Swap in a new field and give it the keyboard. */
 const refield = async ($: EngineInterface) => {
-  await update($, search, s => ({ ...s, field: (s.field ?? 0) + 1 }))
+  await mutate($, s => ({ ...s, field: (s.field ?? 0) + 1 }))
   await $.ui.focus({ requestId: band, key: fieldKey(await read($, search)) })
 }
 
@@ -256,7 +282,7 @@ let watch: { cancel: () => void } | undefined
 const close = async ($: EngineInterface) => {
   watch?.cancel()
   watch = undefined
-  await update($, search, () => NONE)
+  await mutate($, () => NONE, true)
   if (style === 'prompt') await flag($, false)
 }
 
@@ -265,13 +291,13 @@ const openPrompt = async ($: EngineInterface, draft: string) => {
   if (!(await flag($, true))) return false
   savedDraft = draft
   await load($)
-  await update($, search, s => ({ ...s, isOpen: true }))
+  await mutate($, s => ({ ...s, isOpen: true }))
   return true
 }
 
 const open = async ($: EngineInterface) => {
   await load($)
-  await update($, search, s => ({ ...s, isOpen: true }))
+  await mutate($, s => ({ ...s, isOpen: true }))
   watch?.cancel()
   let wasHeld = false
   let misses = 0
@@ -293,7 +319,7 @@ export const register: Register = on => {
     })
     await chooseStyle($)
     // A search left open by an earlier load has lost its state: start closed.
-    if ((await read($, search)).isOpen) await update($, search, () => NONE)
+    if ((await read($, search)).isOpen) await mutate($, () => NONE, true)
     if (style === 'prompt') await flag($, false)
     return next(e)
   })
@@ -465,9 +491,10 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
     track(e.requestId, e.props.onScreen)
-    const now = await read($, search)
     const isPlain = !e.props.task && !e.props.from
-    if (!now.query || !isPlain || !ranges(e.props.text, now.query).length) return next(e)
+    if (!live.query || !isPlain || !ranges(e.props.text, live.query).length) return next(e)
+    const now = await read($, search) // a row with a match follows the selection
+    if (!now.query) return next(e)
     const { Box, Text } = $.ui.resolve(e)
     const tally: Tally = { seen: 0, selected: selectedIn(now, e.requestId) }
 
@@ -489,8 +516,9 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
     track(e.requestId, e.props.onScreen)
-    const now = await read($, search)
-    if (!now.query || !countIn(e.props.text, now.query)) return next(e)
+    if (!live.query || !countIn(e.props.text, live.query)) return next(e)
+    const now = await read($, search) // a row with a match follows the selection
+    if (!now.query) return next(e)
     const { Box, Markdown, Text } = $.ui.resolve(e)
     const tally: Tally = { seen: 0, selected: selectedIn(now, e.requestId) }
     const columns = Math.max(30, (e.viewport?.columns ?? 100) - 4)
