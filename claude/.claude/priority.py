@@ -52,7 +52,9 @@ def main(argv):
     cmd = argv.pop(0) if argv else "show"
     if cmd == "line":
         try:
-            print(line())
+            out = line()
+            if out:  # zero bytes when nothing is set: even a bare newline makes Claude Code draw an empty row
+                print(out)
         except Exception:
             pass
         return 0
