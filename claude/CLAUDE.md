@@ -17,7 +17,8 @@ pick changes up within 15 min. Only
 - `test/q-quit-test.sh`: end-to-end tests (see Testing).
 - `.claude/priority.py`: the status line, "<machine> | <the one thing to prioritise>" (ported from Mia's on doe).
   `set <text> [--until "YYYY-MM-DD HH:MM"]` / `clear` / `show` / `line`; state is per machine in
-  `~/.local/state/claude-priority.json`. Each machine's `settings.json` points `statusLine` at it (added by hand).
+  `~/.local/state/claude-priority.json`. The script adds `statusLine` to `settings.json` on `set` and removes it on `clear`/expiry, because Claude Code
+  draws an empty row for a status line that prints nothing.
 
 `settings.json` is NOT tracked: it is per machine and Claude Code rewrites it.
 

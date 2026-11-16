@@ -8,8 +8,11 @@ The priority is a judgement, so a Claude session (or you) sets it; this file onl
   priority.py show                                      the stored priority and when it runs out
   priority.py line                                      the status line (what ~/.claude/settings.json runs)
 
-`line` prints "<machine> | <text>", or nothing at all when nothing is stored or it has run out (a stale priority
-is worse than none, and an empty line keeps the footer where it was). It never fails: any error prints nothing.
+`line` prints "<machine> | <text>", or nothing when nothing is stored or it has run out (a stale priority is worse
+than none). It never fails: any error prints nothing.
+Claude Code draws a row for the status line even when it prints nothing, so the `statusLine` entry in
+~/.claude/settings.json only exists while a priority is set: `set` adds it, `clear` removes it, and `line` removes it
+when the priority has run out.
 Stored per machine in ~/.local/state/claude-priority.json.
 Ported from Mia's tools/priority.py on doe, 16 Nov 2026.
 """
@@ -17,6 +20,30 @@ import datetime, json, os, socket, sys
 
 FILE = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "claude-priority.json")
 FMT = "%Y-%m-%d %H:%M"
+SETTINGS = os.path.expanduser("~/.claude/settings.json")
+STATUSLINE = {"type": "command", "command": "python3 -I ~/.claude/priority.py line"}
+
+
+def bar(on):
+    """Add or remove the statusLine entry in settings.json. Leaves someone else's status line alone."""
+    try:
+        with open(SETTINGS, encoding="utf-8") as f:
+            d = json.load(f)
+        have = d.get("statusLine")
+        if on and have is None:
+            d["statusLine"] = STATUSLINE
+        elif not on and have == STATUSLINE:
+            del d["statusLine"]
+        else:
+            return
+        tmp = SETTINGS + ".priority-tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        os.chmod(tmp, os.stat(SETTINGS).st_mode & 0o777)
+        os.replace(tmp, SETTINGS)
+    except (OSError, ValueError):
+        pass
 
 
 def load():
@@ -53,8 +80,10 @@ def main(argv):
     if cmd == "line":
         try:
             out = line()
-            if out:  # zero bytes when nothing is set: even a bare newline makes Claude Code draw an empty row
+            if out:
                 print(out)
+            else:
+                bar(False)  # run out: take the empty row away
         except Exception:
             pass
         return 0
@@ -72,6 +101,7 @@ def main(argv):
         with open(FILE + ".tmp", "w", encoding="utf-8") as f:
             json.dump({"text": text, "set": datetime.datetime.now().strftime(FMT), "until": until.strftime(FMT)}, f, ensure_ascii=False)
         os.replace(FILE + ".tmp", FILE)
+        bar(True)
         print(f"priority set: {text} (until {until.strftime(FMT)})")
         return 0
     if cmd == "clear":
@@ -79,6 +109,7 @@ def main(argv):
             os.remove(FILE)
         except OSError:
             pass
+        bar(False)
         print("priority cleared")
         return 0
     if cmd == "show":
