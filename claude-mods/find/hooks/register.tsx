@@ -66,7 +66,7 @@ const INK = '#151520'
 // Inline code and code blocks, as the engine colours them.
 const CODE = 'permission'
 
-type Message = { id: string; role: 'user' | 'assistant'; text: string }
+type Message = { id: string; role: 'user' | 'assistant'; text: string; old?: boolean }
 
 /** A piece's Text props: its style, and a match's paint over it. */
 const look = (piece: Piece) => ({
@@ -107,14 +107,15 @@ const selectedIn = (now: Search, rowId: string) => {
 }
 
 // Reads the session's transcript file and prints one {id, role, text} JSON line per
-// message row of yours or Claude's.  A helper process does it because the
+// message row of yours or Claude's, with old: true on those from before the
+// conversation was last compacted.  A helper process does it because the
 // file outgrows what $.fs.read takes (4 MiB) in a long session, while the
 // messages alone stay small.  argv[1] is the session id.
 const EXTRACT = `
 import glob, json, os, sys
 
 def said(e):
-    if e.get("isMeta") or e.get("isSidechain"):
+    if e.get("isMeta") or e.get("isSidechain") or e.get("isCompactSummary"):
         return ""
     content = (e.get("message") or {}).get("content")
     kind = e.get("type")
@@ -138,15 +139,21 @@ def said(e):
     return ""
 
 paths = glob.glob(os.path.expanduser("~/.claude/projects/*/" + sys.argv[1] + ".jsonl"))
+found = []
 for line in open(paths[0]) if paths else []:
     try:
         e = json.loads(line)
     except ValueError:
         continue  # a torn last line
+    if e.get("subtype") == "compact_boundary":
+        for m in found:
+            m["old"] = True  # from before the conversation was last compacted
     text = said(e)
     if text and e.get("uuid"):
         role = "assistant" if e.get("type") == "assistant" else "user"
-        print(json.dumps({"id": e["uuid"], "role": role, "text": text}))
+        found.append({"id": e["uuid"], "role": role, "text": text})
+for m in found:
+    print(json.dumps(m))
 `
 
 // The session's messages, read from its transcript file when the bar opens.
@@ -169,6 +176,22 @@ const load = async ($: EngineInterface) => {
     }
   }
   messages = list
+  places = new Map(list.map((m, i) => [m.id, i]))
+}
+
+// Where each message stands in the session, by id, for telling before from after.
+let places = new Map<string, number>()
+const place = (id: string) => places.get(id) ?? -1
+
+/**
+ * Drop a message the chat turned out not to draw, so its matches stop being
+ * counted.  After a compaction the chat may no longer draw what came before
+ * it (a resumed session never does), though the transcript file keeps it all:
+ * an undrawn message from before the compaction takes the rest of them along.
+ */
+const forget = (id: string) => {
+  const isOld = messages.find(m => m.id === id)?.old === true
+  messages = messages.filter(m => m.id !== id && !(isOld && m.old))
 }
 
 /** How many matches a message row draws: a reply's in its visible text. */
@@ -188,6 +211,24 @@ const hitsFor = (query: string): Hit[] =>
 const setQuery = ($: EngineInterface, query: string) =>
   mutate($, s => ({ ...s, isOpen: true, query, hits: hitsFor(query), current: -1 }), true)
 
+// Prompt style: a query typed and left alone for a moment selects its first
+// hit, as Enter would.  The engine lets no scroll answer typing, only a press
+// of the next button, so kitty is asked to send that button's chord.  Each
+// query change, step and close takes a new ticket, which calls off the wait
+// of the one before.
+let ticket = 0
+const SETTLE_MS = 250
+
+const selectFirst = async ($: EngineInterface) => {
+  const mine = ++ticket
+  if (style !== 'prompt' || !kittyWindow) return
+  await $.clock.sleep(SETTLE_MS)
+  if (mine !== ticket || !live.isOpen || !live.hits.length || live.current >= 0) return
+  await $.process.run(['kitty', '@', 'send-key', '--match', `id:${kittyWindow}`, 'alt+j'], {
+    timeoutMs: 3000,
+  })
+}
+
 // When the step now on its way began (clock ms), 0 with none: a key held
 // down, or pressed again before the chat has settled, is dropped rather than
 // piled on top.  A step that has not finished in a second and a half is
@@ -195,7 +236,8 @@ const setQuery = ($: EngineInterface, query: string) =>
 let steppingSince = 0
 
 /** Select the next (+1) or previous (-1) hit, wrapping, and scroll to it. */
-const step = async ($: EngineInterface, by: 1 | -1) => {
+const step = async ($: EngineInterface, by: 1 | -1, tries = 0): Promise<void> => {
+  ticket++
   const began = await $.clock.now()
   if (began - steppingSince < 1500) return
   steppingSince = began
@@ -211,6 +253,16 @@ const step = async ($: EngineInterface, by: 1 | -1) => {
     await mutate($, s => ({ ...s, current }))
     const answer = await $.ui.scroll({ to: { requestId: target.id }, block: 'center' })
     if (answer?.deny) {
+      if (answer.deny.includes('nothing drawn') && tries < 200) {
+        forget(target.id)
+        const hits = hitsFor(now.query)
+        // Stand just before (or after) where the row was, and step again.
+        const after = hits.findIndex(hit => place(hit.id) > place(target.id))
+        const beside = by > 0 ? (after < 0 ? hits.length : after) - 1 : after
+        await mutate($, s => ({ ...s, hits, current: beside }))
+        steppingSince = 0
+        return step($, by, tries + 1)
+      }
       $.ui.toast(`find: could not scroll there (${answer.deny})`)
       return
     }
@@ -282,6 +334,7 @@ let watch: { cancel: () => void } | undefined
 const close = async ($: EngineInterface) => {
   watch?.cancel()
   watch = undefined
+  ticket++
   await mutate($, () => NONE, true)
   if (style === 'prompt') await flag($, false)
 }
@@ -377,7 +430,10 @@ export const register: Register = on => {
         return { text: savedDraft, cursor: savedDraft.length }
       }
       const query = box.text.slice(PREFIX.length).replace(/\n/g, '')
-      if (query !== now.query) await setQuery($, query)
+      if (query !== now.query) {
+        await setQuery($, query)
+        void selectFirst($).catch(() => {})
+      }
       return box
     }
     // Bar style, writing in the prompt again: the search is over.
