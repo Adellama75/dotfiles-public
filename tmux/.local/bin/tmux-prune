@@ -28,7 +28,8 @@
 #     less more man top htop btop vim nvim nano
 #   - claude waiting for input: title starts with ✳ (not a working glyph),
 #     no shell running under it (Bash tool, Monitor, background task), and no
-#     pending /loop wakeup or in-session cron (claude-session-info). Nothing is
+#     pending /loop wakeup or in-session cron (claude-session-info). For the
+#     sweep, also no activity in the conversation for 24h. Nothing is
 #     lost: `claude -c` / --resume brings the conversation back, and
 #     claude-resurrect restores it after a reboot.
 # Anything else — a job, a server, ssh, a running monitor — keeps its session.
@@ -98,7 +99,15 @@ pane_done() {   # $1 pane_pid, $2 command, $3 cwd, $4 title
         local cpid; cpid=$(claude_pid "$1") || return 1
         ps -o comm= --ppid "$cpid" 2>/dev/null | grep -qE "$shell_re" && return 1   # tool / Monitor running
         local info; info=$("$here/claude-session-info" "$3" "$4" 2>/dev/null) || return 0   # no conversation yet
-        [ "${info##*	}" = 0 ]; return
+        [ "${info##*	}" = 0 ] || return 1
+        # the sweep also wants the conversation itself quiet for 24h: a session
+        # driven from the phone (Remote Control), by other sessions' messages or
+        # by a plugin is never attached, yet in use
+        if [ "$mode" = sweep ]; then
+            local log="$HOME/.claude/projects/${3//\//-}/${info%%	*}.jsonl"
+            [ -f "$log" ] && [ $(( $(date +%s) - $(stat -c %Y "$log") )) -lt 86400 ] && return 1
+        fi
+        return 0
     fi
     return 1
 }
