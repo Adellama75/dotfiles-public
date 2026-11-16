@@ -14,7 +14,7 @@ import type { Piece, Tally } from './markdown'
 // highlights.
 
 const TRIGGER = '\uE0CF'
-const NONE: Search = { isOpen: false, query: '', hits: [], current: -1 }
+const NONE: Search = { isOpen: false, query: '', hits: [], current: -1, field: 0 }
 const search = atom({ plugin: 'find', key: 'search' } as const, NONE)
 
 // Colours: the selected hit orange, the others yellow, dark text on both.
@@ -131,7 +131,7 @@ const hitsFor = (query: string): Hit[] =>
     : []
 
 const setQuery = ($: EngineInterface, query: string) =>
-  update($, search, () => ({ isOpen: true, query, hits: hitsFor(query), current: -1 }))
+  update($, search, s => ({ ...s, isOpen: true, query, hits: hitsFor(query), current: -1 }))
 
 /** Select the next (+1) or previous (-1) hit, wrapping, and scroll to it. */
 const step = async ($: EngineInterface, by: 1 | -1) => {
@@ -157,6 +157,18 @@ const step = async ($: EngineInterface, by: 1 | -1) => {
 // The band's id, learnt when it is first drawn; $.ui.focus names it.
 let band = ''
 
+// The text field's key.  It changes after every step, which makes the engine
+// draw a new field holding the query: the old one keeps what the key did to
+// it (a shift+Enter's newline, an Enter's emptying), and a field's own text
+// is not the mod's to rewrite.
+const fieldKey = (now: Search) => `query-${now.field ?? 0}`
+
+/** Swap in a new field and give it the keyboard. */
+const refield = async ($: EngineInterface) => {
+  await update($, search, s => ({ ...s, field: (s.field ?? 0) + 1 }))
+  await $.ui.focus({ requestId: band, key: fieldKey(await read($, search)) })
+}
+
 // Esc in the bar hands the keyboard back to the prompt without telling the
 // mod.  So while the bar is up, ask now and then whether its field can still
 // take the focus: once it could and no longer can, the person has left, and
@@ -177,7 +189,7 @@ const open = async ($: EngineInterface) => {
   let misses = 0
   watch = $.clock.every(250, async () => {
     if (!band) return
-    const answer = await $.ui.focus({ requestId: band, key: 'query' })
+    const answer = await $.ui.focus({ requestId: band, key: fieldKey(await read($, search)) })
     if (!answer?.deny) {
       wasHeld = true
       misses = 0
@@ -226,7 +238,7 @@ export const register: Register = on => {
   // such a move, so they cannot step).  The field sits between two controls,
   // the "find:" label and the close mark, so there is somewhere to move to.
   on('ui.focus', async ($, e, next) => {
-    const isLeaving = e.origin.kind === 'person' && e.element !== 'query'
+    const isLeaving = e.origin.kind === 'person' && !(e.element ?? '').startsWith('query-')
     if (!isLeaving || e.requestId !== band || !(await read($, search)).isOpen) return next(e)
     await close($)
     return {}
@@ -238,8 +250,7 @@ export const register: Register = on => {
     band = e.requestId
     const { Box, Button, Input, Text } = $.ui.resolve(e)
     const total = now.hits.length
-    // The field empties on Enter, so the query is named beside the count.
-    // On a narrow window the bar keeps to one line: the count alone, no hint.
+    // On a narrow window the bar keeps to one line: no hint.
     const isNarrow = e.props.bodyColumns < 76
     const where = !now.query
       ? ''
@@ -247,9 +258,7 @@ export const register: Register = on => {
         ? 'no matches'
         : now.current < 0
           ? `${total} found`
-          : isNarrow
-            ? `${now.current + 1}/${total}`
-            : `"${now.query}" ${now.current + 1}/${total}`
+          : `${now.current + 1}/${total}`
 
     return (
       <Box flexDirection="row" gap={1}>
@@ -257,24 +266,24 @@ export const register: Register = on => {
           find:
         </Button>
         <Input
-          key="query"
+          key={fieldKey(now)}
           value={now.query}
           autoFocus
           submitLabel="next"
           onInput={async typed => {
             // shift+Enter types a newline into the field: "previous".
             const value = typed.replace(/\n/g, '')
-            const held = (await read($, search)).query
             if (typed.includes('\n')) {
-              // After an Enter the field is empty: keep the search it ran.
-              if (value && value !== held) await setQuery($, value)
+              if (value && value !== (await read($, search)).query) await setQuery($, value)
               await step($, -1)
+              await refield($)
             } else await setQuery($, value)
           }}
           onSubmit={async typed => {
             const value = typed.replace(/\n/g, '')
             if (value && value !== (await read($, search)).query) await setQuery($, value)
             await step($, 1)
+            await refield($)
           }}
         />
         <Text dimColor>{where}</Text>
