@@ -67,7 +67,18 @@ const look = (piece: Piece) => ({
  * (8129bb46-9d65-46e5-bd8e-000000000000 for ...-5a26282378d0), so the two are
  * compared without that group.
  */
-const isRow = (id: string, rowId: string) => id.slice(0, 24) === rowId.slice(0, 24)
+const rowKey = (id: string) => id.slice(0, 24)
+const isRow = (id: string, rowId: string) => rowKey(id) === rowKey(rowId)
+
+// Which part of each message row is on screen, by rowKey, as the engine last
+// reported it to the row's drawing; absent while the row is off screen.
+const shown = new Map<string, { first: number; last: number; of: number }>()
+
+/** Note what a row's drawing was told about its place on screen. */
+const track = (rowId: string, onScreen: { first: number; last: number; of: number } | null | undefined) => {
+  if (onScreen) shown.set(rowKey(rowId), onScreen)
+  else shown.delete(rowKey(rowId))
+}
 
 /** Which match of a row is the selected one: its index there, or -1. */
 const selectedIn = (now: Search, rowId: string) => {
@@ -170,16 +181,23 @@ const step = async ($: EngineInterface, by: 1 | -1) => {
       now.current < 0 ? (by > 0 ? 0 : total - 1) : (now.current + by + total) % total
     const target = now.hits[current]
     if (!target) return
+    const key = rowKey(target.id)
     await update($, search, s => ({ ...s, current }))
-    // The chat only guesses the height of rows it has not drawn, so a long
-    // jump can land beside the row: go there, let it draw, and go again.
     const answer = await $.ui.scroll({ to: { requestId: target.id }, block: 'center' })
     if (answer?.deny) {
       $.ui.toast(`find: could not scroll there (${answer.deny})`)
       return
     }
-    await $.clock.sleep(120)
-    await $.ui.scroll({ to: { requestId: target.id }, block: 'center' })
+    // The chat only guesses the height of a row it has never drawn, so a jump
+    // to one can land beside it.  Give the row a moment to report that its
+    // top is on screen; only when it does not is the jump made again, since a
+    // second jump shows as a second update.
+    let landed = false
+    for (let waited = 0; waited < 240 && !landed; waited += 40) {
+      await $.clock.sleep(40)
+      landed = shown.get(key)?.first === 0
+    }
+    if (!landed) await $.ui.scroll({ to: { requestId: target.id }, block: 'center' })
   } finally {
     isStepping = false
   }
@@ -446,6 +464,7 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
+    track(e.requestId, e.props.onScreen)
     const now = await read($, search)
     const isPlain = !e.props.task && !e.props.from
     if (!now.query || !isPlain || !ranges(e.props.text, now.query).length) return next(e)
@@ -465,6 +484,7 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
+    track(e.requestId, e.props.onScreen)
     const now = await read($, search)
     if (!now.query || !countIn(e.props.text, now.query)) return next(e)
     const { Box, Markdown, Text } = $.ui.resolve(e)
