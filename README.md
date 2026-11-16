@@ -9,7 +9,7 @@ and a `bin` package of small scripts: `clp` copies files/stdin to the clipboard 
 `sioyek-copy-on-select` mirrors sioyek's mouse selection into the clipboard so ctrl+v works; needs python3-xlib, xinput, xclip).
 `claude-transcript` shows a running Claude Code session's conversation (your messages and its replies, no tool output) in less.
 `claude-mods/` is not a stow package: it holds Claude Code mods, added once with `claude plugin marketplace add ~/dotfiles-public/claude-mods` and `claude plugin install find@ada-mods`.
-`find` is ctrl+f in a kitty Claude window: a find bar above the prompt, matches highlighted in place, Enter / shift+Enter to step, Esc or Tab to close (needs python3).
+`find` is ctrl+f in a kitty Claude window: matches highlighted in place, Enter / shift+Enter to step, Esc or Tab to close (needs python3). Over ssh/tmux it is a bar above the prompt; for a claude running straight in a kitty window the prompt box itself is the find bar and Up / Down step too, which needs `"alt+j": "app:diffFileListDown"` and `"alt+k": "app:diffFileListUp"` under `Global` in `~/.claude/keybindings.json`.
 `hyfetch` is the fetch config (lesbian flag, vertical); the binary comes from `packages/apt.txt`, or `pip install hyfetch` on Termux.
 Personal config lives in a separate private repo.
 

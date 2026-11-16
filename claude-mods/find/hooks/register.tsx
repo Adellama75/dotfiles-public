@@ -5,15 +5,36 @@ import type { Hit, Search } from '../types'
 import { blocks, countIn, grid, mark, matchesIn, parse, ranges, rowsOf } from './markdown'
 import type { Piece, Tally } from './markdown'
 
-// ctrl+f: find in the conversation.  A bar opens above the prompt; every match
-// in your messages and Claude's replies is highlighted in place as you type.
-// Tool output is never searched (only message rows are), and a reply is
-// searched as it reads once drawn, not as its markdown source: `*` does not
-// find the stars around bold text.  Enter goes to the next hit, oldest first;
-// shift+Enter to the previous one; Esc or Tab closes the bar and clears the
-// highlights.
+// ctrl+f: find in the conversation.  Every match in your messages and
+// Claude's replies is highlighted in place as you type.  Tool output is never
+// searched (only message rows are), and a reply is searched as it reads once
+// drawn, not as its markdown source: `*` does not find the stars around bold
+// text.  Enter goes to the next hit, oldest first; shift+Enter to the
+// previous one; Esc or Tab closes and clears the highlights.
+//
+// Two styles, chosen per session.  Bar style: a bar opens above the prompt.
+// Prompt style, where claude runs straight in a kitty window: the prompt box
+// is the bar, and Up / Down step too (see PREFIX below).
 
 const TRIGGER = '\uE0CF'
+
+// Prompt style (a claude running straight in a kitty window): the prompt box
+// itself is the find bar, "find: " then the query, and the hint line under it
+// holds the count and two buttons, next and previous, so the search takes no
+// row of its own.  A step has to be a button press: of what a person does at
+// the prompt, that is what the engine lets a mod scroll the chat for without
+// leaving a line in it (a stopped Enter leaves "Prompt dropped by a hook").
+// The buttons answer to two key chords (NEXT_ACTION, PREVIOUS_ACTION, bound in
+// ~/.claude/keybindings.json), and while the window's user variable find=1 is
+// set, kitty sends those chords for Enter / Down and shift+Enter / Up, and
+// CLOSE, a private-use character, for Esc, Tab and ctrl+c (kitty.conf).
+const PREFIX = 'find: '
+const CLOSE = '\uE0D3'
+// Engine actions with nothing listening outside the diff view, borrowed for
+// their chords: alt+j and alt+k, bound to them under "Global" in
+// keybindings.json.
+const NEXT_ACTION = 'app:diffFileListDown'
+const PREVIOUS_ACTION = 'app:diffFileListUp'
 const NONE: Search = { isOpen: false, query: '', hits: [], current: -1, field: 0 }
 const search = atom({ plugin: 'find', key: 'search' } as const, NONE)
 
@@ -154,6 +175,35 @@ const step = async ($: EngineInterface, by: 1 | -1) => {
   await $.ui.scroll({ to: { requestId: target.id }, block: 'center' })
 }
 
+// How this session searches: in the prompt box, or in a bar above it.
+let style: 'prompt' | 'bar' = 'bar'
+// The kitty window this claude runs in, when kitty can be told about a search.
+let kittyWindow = ''
+// The draft the prompt held before it became the find bar, put back on close.
+let savedDraft = ''
+/** FIND_MOD_STYLE forces a style; else prompt style where kitty is at hand. */
+const chooseStyle = async ($: EngineInterface) => {
+  const forced = await $.env.get('FIND_MOD_STYLE')
+  const isInTmux = Boolean(await $.env.get('TMUX'))
+  const hasSocket = Boolean(await $.env.get('KITTY_LISTEN_ON'))
+  kittyWindow = (!isInTmux && hasSocket && (await $.env.get('KITTY_WINDOW_ID'))) || ''
+  style = forced === 'prompt' || forced === 'bar' ? forced : kittyWindow ? 'prompt' : 'bar'
+}
+
+/** Tell kitty whether this window is searching (its user variable `find`). */
+const flag = async ($: EngineInterface, isSearching: boolean) => {
+  if (!kittyWindow) return true
+  try {
+    const ran = await $.process.run(
+      ['kitty', '@', 'set-user-vars', '--match', `id:${kittyWindow}`, isSearching ? 'find=1' : 'find'],
+      { timeoutMs: 3000 },
+    )
+    return ran.exitCode === 0
+  } catch {
+    return false
+  }
+}
+
 // The band's id, learnt when it is first drawn; $.ui.focus names it.
 let band = ''
 
@@ -179,6 +229,16 @@ const close = async ($: EngineInterface) => {
   watch?.cancel()
   watch = undefined
   await update($, search, () => NONE)
+  if (style === 'prompt') await flag($, false)
+}
+
+/** Prompt style: start a search; false when kitty could not be told. */
+const openPrompt = async ($: EngineInterface, draft: string) => {
+  if (!(await flag($, true))) return false
+  savedDraft = draft
+  await load($)
+  await update($, search, s => ({ ...s, isOpen: true }))
+  return true
 }
 
 const open = async ($: EngineInterface) => {
@@ -203,14 +263,21 @@ export const register: Register = on => {
       name: 'find',
       description: 'Find in the conversation (also ctrl+f): Enter / shift+Enter step, Esc or Tab closes',
     })
-    // A bar left open by an earlier load has no watch: start closed.
+    await chooseStyle($)
+    // A search left open by an earlier load has lost its state: start closed.
     if ((await read($, search)).isOpen) await update($, search, () => NONE)
+    if (style === 'prompt') await flag($, false)
     return next(e)
   })
 
   on('command.run', { command: 'find' }, async ($, e) => {
-    await open($)
     const query = e.args.trim()
+    if (style === 'prompt' && (await openPrompt($, ''))) {
+      await $.prompt.fill({ text: PREFIX + query, mode: 'replace' })
+    } else {
+      style = 'bar'
+      await open($)
+    }
     if (query) {
       await setQuery($, query)
       await step($, 1)
@@ -218,18 +285,87 @@ export const register: Register = on => {
     return {}
   })
 
+
   // ctrl+f at the prompt opens the bar.  The terminal sends it as one
   // private-use character (TRIGGER; kitty.conf maps ctrl+f to it), since a
   // bare ctrl+f that moves nothing raises no edit.  It never lands in the draft.
   on('prompt.edit', async ($, e, next) => {
+    const typed = e.inputText
+    const kept = { text: e.text, cursor: e.cursor }
+    const now = await read($, search)
     const isKey = e.key?.ctrl === true && e.key.key === 'f'
-    if (isKey || e.inputText.includes(TRIGGER)) {
+    if (isKey || typed.includes(TRIGGER)) {
+      if (style === 'prompt') {
+        if (now.isOpen) return kept
+        if (await openPrompt($, e.text)) return { text: PREFIX, cursor: PREFIX.length }
+        style = 'bar' // kitty cannot be told: the bar needs no help
+      }
       await open($)
-      return { text: e.text, cursor: e.cursor }
+      return kept
     }
-    // Writing in the prompt again: the search is over.
-    if (e.inputText && (await read($, search)).isOpen) await close($)
+    if (typed.includes(CLOSE)) {
+      if (style === 'prompt' && now.isOpen) {
+        await close($)
+        return { text: savedDraft, cursor: savedDraft.length }
+      }
+      await flag($, false) // kitty thinks a search is on: put it right
+      return kept
+    }
+    if (style === 'prompt' && now.isOpen) {
+      const box = await next(e)
+      // The prefix edited away: the search is over.
+      if (!box.text.startsWith(PREFIX)) {
+        await close($)
+        return { text: savedDraft, cursor: savedDraft.length }
+      }
+      const query = box.text.slice(PREFIX.length).replace(/\n/g, '')
+      if (query !== now.query) await setQuery($, query)
+      return box
+    }
+    // Bar style, writing in the prompt again: the search is over.
+    if (typed && now.isOpen) await close($)
     return next(e)
+  })
+
+  // Prompt style: the draft is the query and is never sent.  kitty turns
+  // Enter into the next button's chord, so an Enter only gets here when kitty
+  // was not told of the search; it still steps, at the cost of the engine's
+  // "Prompt dropped" line.
+  on('prompt.submit', async ($, e, next) => {
+    const now = await read($, search)
+    if (style !== 'prompt' || !now.isOpen || !e.text.startsWith(PREFIX)) return next(e)
+    await step($, 1)
+    return { drop: '' }
+  }).catch(($, e, next) => (e.text.startsWith(PREFIX) ? { drop: '' } : next(e)))
+
+  // Prompt style: the count and the two buttons, on the hint line under the
+  // prompt.
+  on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
+    const now = await read($, search)
+    if (style !== 'prompt' || !now.isOpen) return next(e)
+    const { Box, Button, Text } = $.ui.resolve(e)
+    const total = now.hits.length
+    const where = !now.query
+      ? 'type to search'
+      : total === 0
+        ? 'no matches'
+        : now.current < 0
+          ? `${total} found`
+          : `${now.current + 1}/${total}`
+
+    return (
+      <Box flexDirection="row" gap={1}>
+        <Text dimColor>find {where} ·</Text>
+        <Button key="next" plain action={NEXT_ACTION} onPress={() => step($, 1)}>
+          enter next
+        </Button>
+        <Text dimColor>·</Text>
+        <Button key="previous" plain action={PREVIOUS_ACTION} onPress={() => step($, -1)}>
+          shift+enter previous
+        </Button>
+        <Text dimColor>· esc close</Text>
+      </Box>
+    )
   })
 
   // Tab leaves the bar, as Esc does.  It reaches the mod as the focus moving
@@ -246,7 +382,7 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const now = await read($, search)
-    if (!now.isOpen || e.props.hasSurvey) return next(e)
+    if (!now.isOpen || style !== 'bar' || e.props.hasSurvey) return next(e)
     band = e.requestId
     const { Box, Button, Input, Text } = $.ui.resolve(e)
     const total = now.hits.length
