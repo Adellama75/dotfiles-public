@@ -22,8 +22,23 @@ save=$(readlink -f ~/.local/share/tmux/resurrect/last 2>/dev/null)
 [ -n "$save" ] && IFS=$'\t' read -r title cmd < <(awk -F'\t' -v s="$session" -v w="$window" -v p="$index" \
     '$1=="pane" && $2==s && $3==w && $6==p { print $7 "\t" substr($11,2); exit }' "$save")
 
-# drop resume flags from the saved command so they do not stack up across restores
-cmd=$(printf '%s' "${cmd:-claude --dangerously-skip-permissions}" | sed -E 's/ --resume [^ ]+//; s/ (-c|--continue)( |$)/ /')
+# Keep the program and its leading flags only. Drop resume flags, so they do not
+# stack up across restores, and everything from the first non-flag word on: that
+# is the prompt claude was started with ("claude /follow discord x"), which would
+# be sent again into the resumed conversation.
+set -f; kept=() skip=
+for w in ${cmd:-claude --dangerously-skip-permissions}; do
+    if [ ${#kept[@]} -eq 0 ]; then kept=("$w"); continue; fi
+    if [ -n "$skip" ]; then [ "$skip" = keep ] && kept+=("$w"); skip=; continue; fi
+    case $w in
+        -c|--continue) ;;
+        --resume|-r|--session-id) skip=drop ;;
+        --model|--effort|--permission-mode|--settings|--add-dir|--name|-n|--plugin-dir|--mcp-config|--agent) kept+=("$w"); skip=keep ;;
+        -*) kept+=("$w") ;;
+        *) break ;;
+    esac
+done
+set +f; cmd=${kept[*]}
 resume=-c
 sid=$("$here/claude-session-info" "$cwd" "$title" 2>/dev/null | cut -f1)
 [ -n "$sid" ] && resume="--resume $sid"
