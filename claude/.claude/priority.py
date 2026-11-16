@@ -8,8 +8,8 @@ The priority is a judgement, so a Claude session (or you) sets it; this file onl
   priority.py show                                      the stored priority and when it runs out
   priority.py line                                      the status line (what ~/.claude/settings.json runs)
 
-`line` prints "<machine> | <text>", or just the machine name when nothing is stored or it has run out (a stale
-priority is worse than none). It never fails: any error prints the machine name.
+`line` prints "<machine> | <text>", or nothing at all when nothing is stored or it has run out (a stale priority
+is worse than none, and an empty line keeps the footer where it was). It never fails: any error prints nothing.
 Stored per machine in ~/.local/state/claude-priority.json.
 Ported from Mia's tools/priority.py on doe, 16 Nov 2026.
 """
@@ -44,7 +44,7 @@ def current():
 def line():
     name = socket.gethostname().lower()
     p = current()
-    return f"{name} | {p['text']}" if p else name
+    return f"{name} | {p['text']}" if p else ""  # nothing set: print nothing, so the bar takes no row
 
 
 def main(argv):
@@ -54,7 +54,7 @@ def main(argv):
         try:
             print(line())
         except Exception:
-            print(socket.gethostname().lower())
+            pass
         return 0
     if cmd == "set":
         until = datetime.datetime.now() + datetime.timedelta(hours=36)
