@@ -15,6 +15,9 @@ pick changes up within 15 min. Only
   with jq, idempotently. To add a hook: put the script in `.claude/hooks/` and add a
   line to the `hooks=(...)` array there.
 - `test/q-quit-test.sh`: end-to-end tests (see Testing).
+- `.claude/priority.py`: the status line, "<machine> | <the one thing to prioritise>" (ported from Mia's on doe).
+  `set <text> [--until "YYYY-MM-DD HH:MM"]` / `clear` / `show` / `line`; state is per machine in
+  `~/.local/state/claude-priority.json`. Each machine's `settings.json` points `statusLine` at it (added by hand).
 
 `settings.json` is NOT tracked: it is per machine and Claude Code rewrites it.
 
