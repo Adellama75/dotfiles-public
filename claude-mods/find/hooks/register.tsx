@@ -154,25 +154,35 @@ const hitsFor = (query: string): Hit[] =>
 const setQuery = ($: EngineInterface, query: string) =>
   update($, search, s => ({ ...s, isOpen: true, query, hits: hitsFor(query), current: -1 }))
 
+// True while a step is on its way: a key held down, or pressed again before
+// the chat has settled, is dropped rather than piled on top.
+let isStepping = false
+
 /** Select the next (+1) or previous (-1) hit, wrapping, and scroll to it. */
 const step = async ($: EngineInterface, by: 1 | -1) => {
-  const now = await read($, search)
-  if (!now.hits.length) return
-  const total = now.hits.length
-  const current =
-    now.current < 0 ? (by > 0 ? 0 : total - 1) : (now.current + by + total) % total
-  const target = now.hits[current]
-  if (!target) return
-  await update($, search, s => ({ ...s, current }))
-  // The chat only guesses the height of rows it has not drawn, so a long
-  // jump can land beside the row: go there, let it draw, and go again.
-  const answer = await $.ui.scroll({ to: { requestId: target.id }, block: 'center' })
-  if (answer?.deny) {
-    $.ui.toast(`find: could not scroll there (${answer.deny})`)
-    return
+  if (isStepping) return
+  isStepping = true
+  try {
+    const now = await read($, search)
+    const total = now.hits.length
+    if (!total) return
+    const current =
+      now.current < 0 ? (by > 0 ? 0 : total - 1) : (now.current + by + total) % total
+    const target = now.hits[current]
+    if (!target) return
+    await update($, search, s => ({ ...s, current }))
+    // The chat only guesses the height of rows it has not drawn, so a long
+    // jump can land beside the row: go there, let it draw, and go again.
+    const answer = await $.ui.scroll({ to: { requestId: target.id }, block: 'center' })
+    if (answer?.deny) {
+      $.ui.toast(`find: could not scroll there (${answer.deny})`)
+      return
+    }
+    await $.clock.sleep(120)
+    await $.ui.scroll({ to: { requestId: target.id }, block: 'center' })
+  } finally {
+    isStepping = false
   }
-  await $.clock.sleep(120)
-  await $.ui.scroll({ to: { requestId: target.id }, block: 'center' })
 }
 
 // How this session searches: in the prompt box, or in a bar above it.
@@ -295,8 +305,12 @@ export const register: Register = on => {
     const now = await read($, search)
     const isKey = e.key?.ctrl === true && e.key.key === 'f'
     if (isKey || typed.includes(TRIGGER)) {
+      // ctrl+f while searching closes, as it opened.
+      if (now.isOpen) {
+        await close($)
+        return style === 'prompt' ? { text: savedDraft, cursor: savedDraft.length } : kept
+      }
       if (style === 'prompt') {
-        if (now.isOpen) return kept
         if (await openPrompt($, e.text)) return { text: PREFIX, cursor: PREFIX.length }
         style = 'bar' // kitty cannot be told: the bar needs no help
       }
