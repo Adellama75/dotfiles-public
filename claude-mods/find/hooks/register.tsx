@@ -471,14 +471,18 @@ export const register: Register = on => {
     const { Box, Text } = $.ui.resolve(e)
     const tally: Tally = { seen: 0, selected: selectedIn(now, e.requestId) }
 
+    // The engine's own row opens with a blank line; so does this one.
     return (
-      <Box flexDirection="row">
+      <Box flexDirection="column">
+        <Text> </Text>
+        <Box flexDirection="row">
         <Text dimColor>❯ </Text>
         <Text>
           {mark([{ text: e.props.text }], now.query, tally).map(piece => (
             <Text {...look(piece)}>{piece.text}</Text>
           ))}
         </Text>
+        </Box>
       </Box>
     )
   })
@@ -522,7 +526,9 @@ export const register: Register = on => {
     // (bold, code, lists, a table's grid) with the match painted over it;
     // every other block is left to the engine's own markdown.
     return (
-      <Box flexDirection="row">
+      <Box flexDirection="column">
+        <Text> </Text>
+        <Box flexDirection="row">
         <Text>{e.props.isFirstOfReply ? '● ' : '  '}</Text>
         <Box flexDirection="column" gap={1}>
           {folded > 0
@@ -550,6 +556,7 @@ export const register: Register = on => {
             )
             return [<Box flexDirection="column">{lines}</Box>]
           })}
+        </Box>
         </Box>
       </Box>
     )
