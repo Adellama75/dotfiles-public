@@ -13,6 +13,13 @@
 #                             attached to for 24h — windows that went away
 #                             without a close signal (laptop crash, kitty killed).
 #   -n with any of them: dry run, just say what would go.
+#   tmux-prune --keep [name]    never prune the session with this name (default:
+#                               the one you are in). Kept by name in
+#                               ~/.config/tmux-prune/keep, so it still holds
+#                               after the session is killed and made again, or
+#                               restored after a reboot. A rename drops it.
+#   tmux-prune --unkeep [name]  prune it again as usual.
+#   tmux-prune --kept           list the kept names.
 #   Kills are logged to the journal: journalctl -t tmux-prune
 #
 # A session is DONE when every pane is one of:
@@ -25,19 +32,35 @@
 #     lost: `claude -c` / --resume brings the conversation back, and
 #     claude-resurrect restores it after a reboot.
 # Anything else — a job, a server, ssh, a running monitor — keeps its session.
-# So does a session with the @keep option (`tmux set @keep 1` inside it): a
-# long-running Claude that idles between events, e.g. one woken by a plugin.
+# So does a kept session (`tmux-prune --keep` inside it): a long-running Claude
+# that idles between events, e.g. one woken by a plugin. `tmux set @keep 1`
+# does the same for the life of that one session only.
 set -u
-dry= mode=detached cid=
+dry= mode=detached cid= arg=
+keepfile=${XDG_CONFIG_HOME:-$HOME/.config}/tmux-prune/keep
 while [ $# -gt 0 ]; do
     case $1 in
         -n) dry=1 ;;
         --closed) mode=closed; cid=${2:?client id}; shift ;;
         --sweep) mode=sweep ;;
-        *) echo "usage: tmux-prune [-n] [--closed <client id> | --sweep]" >&2; exit 2 ;;
+        --keep|--unkeep) mode=${1#--}; if [ $# -gt 1 ]; then arg=$2; shift; fi ;;
+        --kept) mode=kept ;;
+        *) echo "usage: tmux-prune [-n] [--closed <client id> | --sweep | --keep [name] | --unkeep [name] | --kept]" >&2; exit 2 ;;
     esac
     shift
 done
+case $mode in
+    kept) cat "$keepfile" 2>/dev/null; exit 0 ;;
+    keep|unkeep)
+        name=${arg:-$(tmux display -p -t "${TMUX_PANE:-}" '#S' 2>/dev/null)}
+        [ -n "$name" ] || { echo "tmux-prune: not inside tmux; give a session name" >&2; exit 2; }
+        mkdir -p "$(dirname "$keepfile")"; touch "$keepfile"
+        rest=$(grep -vxF -- "$name" "$keepfile")
+        { [ -n "$rest" ] && printf '%s\n' "$rest"; [ $mode = keep ] && printf '%s\n' "$name"; } > "$keepfile.tmp"
+        mv "$keepfile.tmp" "$keepfile"
+        [ $mode = keep ] && echo "kept: $name" || echo "no longer kept: $name"
+        exit 0 ;;
+esac
 here=$(dirname "$(readlink -f "$0")")
 sticky=$HOME/.cache/tmux-sticky
 US='|'      # field separator for tmux -F output. Not tab: IFS whitespace collapses empty fields. Not a control char: tmux prints it escaped (\037). Title is the last field, so a | in it is harmless.
@@ -52,6 +75,7 @@ log() { echo "$*"; logger -t tmux-prune -- "[$mode] $*"; }
 kill_session() {   # $1 session, $2 reason
     local name; name=$(tmux display -p -t "$1" '#S' 2>/dev/null) || return
     [ -n "$(tmux show -qv -t "$1" @keep)" ] && return   # tmux set -t <session> @keep 1: never prune it
+    grep -qxF -- "$name" "$keepfile" 2>/dev/null && return   # tmux-prune --keep: kept by name
     if [ -n "$dry" ]; then log "would kill $name ($2)"
     else tmux kill-session -t "$1" && log "pruned $name ($2)"; fi
 }
