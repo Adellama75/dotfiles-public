@@ -13,11 +13,11 @@
 #   cumin-chrome detach   close the window(s) here
 q="$HOME/.config/xpra/quic"
 case "$1" in
-    detach) pkill -f '[x]pra attach (ssh|quic)://.*cumin'; exit 0 ;;
+    detach) pkill -f '[x]pra attach (ssh|quic)://.*(cumin|100.82.91.94)'; exit 0 ;;
     ssh) set -- ssh://cumin/100 --ssh=/usr/bin/ssh ;;
-    *) set -- quic://ada@cumin:10100/ --ssl-ca-certs="$q/cert.pem" --ssl-server-hostname=cumin --password-file="$q/password" ;;
+    *) set -- quic://ada@100.82.91.94:10100/ --ssl-ca-certs="$q/cert.pem" --ssl-server-hostname=cumin --password-file="$q/password" ;;
 esac
-pgrep -f '[x]pra attach (ssh|quic)://.*cumin' >/dev/null && { echo "already attached"; exit 0; }
+pgrep -f '[x]pra attach (ssh|quic)://.*(cumin|100.82.91.94)' >/dev/null && { echo "already attached"; exit 0; }
 setsid nohup xpra attach "$@" --audio=no --notifications=no --mdns=no \
     --min-speed=80 --quality=60 --bandwidth-detection=yes --desktop-scaling=2 \
     >"${XDG_RUNTIME_DIR:-/tmp}/cumin-chrome.log" 2>&1 &
