@@ -36,4 +36,17 @@ for spec in "${hooks[@]}"; do
 done
 (( changed )) || echo "register-hooks: already registered"
 
+# Spinner verbs ("Grazing…"): the list lives in ~/.claude/spinner-verbs.json
+# (stowed from this package) and is copied into settings.json when it differs.
+# Their past tense, for the line that closes a turn, is the past-verbs mod
+# (dotfiles-public/claude-mods/past-verbs): keep the two lists in step.
+verbs="$HOME/.claude/spinner-verbs.json"
+if [[ -s $verbs ]] && ! jq -e --slurpfile v "$verbs" '.spinnerVerbs == $v[0]' "$settings" >/dev/null; then
+  tmp=$(mktemp "$settings.XXXXXX")
+  jq --slurpfile v "$verbs" '.spinnerVerbs = $v[0]' "$settings" > "$tmp"
+  chmod --reference="$settings" "$tmp"
+  mv "$tmp" "$settings"
+  echo "register-hooks: spinner verbs updated"
+fi
+
 # Written with Claude Fable 5.1

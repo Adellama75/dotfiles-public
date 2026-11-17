@@ -1,5 +1,16 @@
 {
   "name": "ada-mods",
-  "owner": { "name": "ada" },
-  "plugins": [{ "name": "find", "source": "./find" }]
+  "owner": {
+    "name": "ada"
+  },
+  "plugins": [
+    {
+      "name": "find",
+      "source": "./find"
+    },
+    {
+      "name": "past-verbs",
+      "source": "./past-verbs"
+    }
+  ]
 }

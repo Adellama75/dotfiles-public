@@ -14,6 +14,9 @@ pick changes up within 15 min. Only
 - `.claude/hooks/register-hooks.sh`: merges each hook into `~/.claude/settings.json`
   with jq, idempotently. To add a hook: put the script in `.claude/hooks/` and add a
   line to the `hooks=(...)` array there.
+- `.claude/spinner-verbs.json`: the spinner verbs (Mia's list, "Grazing…"); `register-hooks.sh` copies it into
+  `settings.json` as `spinnerVerbs`. Their past tense for the turn-end line ("Grazed for 4s") is the `past-verbs`
+  mod in `../claude-mods`; keep the two lists in step. New machine: `claude plugin install past-verbs@ada-mods`.
 - `test/q-quit-test.sh`: end-to-end tests (see Testing).
 - `.claude/priority.py`: the status line, "<machine> | <the one thing to prioritise>" (ported from Mia's on doe).
   `set <text> [--until "YYYY-MM-DD HH:MM"]` / `clear` / `show` / `line`; state is per machine in

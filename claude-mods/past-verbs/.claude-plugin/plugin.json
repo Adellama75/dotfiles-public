@@ -1,0 +1,6 @@
+{
+  "name": "past-verbs",
+  "version": "1.0.0",
+  "description": "The line that closes a turn (\"Sautéed for 4s\") uses the past tense of Mia's spinner verbs (\"Grazed for 4s\")",
+  "author": { "name": "ada" }
+}
