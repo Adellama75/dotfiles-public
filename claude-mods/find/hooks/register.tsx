@@ -211,22 +211,27 @@ const hitsFor = (query: string): Hit[] =>
 const setQuery = ($: EngineInterface, query: string) =>
   mutate($, s => ({ ...s, isOpen: true, query, hits: hitsFor(query), current: -1 }), true)
 
-// Prompt style: a query typed and left alone for a moment selects its first
-// hit, as Enter would.  The engine lets no scroll answer typing, only a press
-// of the next button, so kitty is asked to send that button's chord.  Each
-// query change, step and close takes a new ticket, which calls off the wait
-// of the one before.
+// Prompt style: typing a query selects its first hit at once, as Enter
+// would.  The engine lets no scroll answer typing, only a press of the next
+// button, so kitty is asked to send that button's chord, and asked again if
+// no hit has been selected a moment later (a press can be lost while the
+// hint line is being redrawn).  Each query change and close takes a new
+// ticket, which calls off the one before and cuts short a step's wait.
 let ticket = 0
-const SETTLE_MS = 250
 
 const selectFirst = async ($: EngineInterface) => {
   const mine = ++ticket
   if (style !== 'prompt' || !kittyWindow) return
-  await $.clock.sleep(SETTLE_MS)
-  if (mine !== ticket || !live.isOpen || !live.hits.length || live.current >= 0) return
-  await $.process.run(['kitty', '@', 'send-key', '--match', `id:${kittyWindow}`, 'alt+j'], {
-    timeoutMs: 3000,
-  })
+  const isWanted = () => mine === ticket && live.isOpen && live.hits.length > 0 && live.current < 0
+  for (let attempt = 0; attempt < 3; attempt++) {
+    // Let a step still on its way finish first.
+    for (let waited = 0; steppingSince && waited < 1500; waited += 20) await $.clock.sleep(20)
+    if (!isWanted()) return
+    await $.process.run(['kitty', '@', 'send-key', '--match', `id:${kittyWindow}`, 'alt+j'], {
+      timeoutMs: 3000,
+    })
+    for (let waited = 0; waited < 400 && isWanted(); waited += 20) await $.clock.sleep(20)
+  }
 }
 
 // When the step now on its way began (clock ms), 0 with none: a key held
@@ -237,12 +242,12 @@ let steppingSince = 0
 
 /** Select the next (+1) or previous (-1) hit, wrapping, and scroll to it. */
 const step = async ($: EngineInterface, by: 1 | -1, tries = 0): Promise<void> => {
-  ticket++
   const began = await $.clock.now()
   if (began - steppingSince < 1500) return
   steppingSince = began
   try {
-    const now = await read($, search)
+    const mine = ticket
+    const now = live // not the atom: no query change may slip in before the write below
     const total = now.hits.length
     if (!total) return
     const current =
@@ -271,11 +276,11 @@ const step = async ($: EngineInterface, by: 1 | -1, tries = 0): Promise<void> =>
     // top is on screen; only when it does not is the jump made again, since a
     // second jump shows as a second update.
     let landed = false
-    for (let waited = 0; waited < 240 && !landed; waited += 40) {
+    for (let waited = 0; waited < 240 && !landed && mine === ticket; waited += 40) {
       await $.clock.sleep(40)
       landed = shown.get(key)?.first === 0
     }
-    if (!landed) await $.ui.scroll({ to: { requestId: target.id }, block: 'center' })
+    if (!landed && mine === ticket) await $.ui.scroll({ to: { requestId: target.id }, block: 'center' })
   } finally {
     if (steppingSince === began) steppingSince = 0
   }
