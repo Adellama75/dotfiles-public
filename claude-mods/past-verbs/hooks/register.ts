@@ -53,6 +53,7 @@ export const PAST = [
   'Napped on it', // Napping on it
   'Got cosy', // Getting cosy
   'Stayed under a blanket', // Under a blanket
+  'Grrked', // Grrking
 ]
 
 /**
