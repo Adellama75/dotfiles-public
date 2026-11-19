@@ -211,17 +211,20 @@ const hitsFor = (query: string): Hit[] =>
 const setQuery = ($: EngineInterface, query: string) =>
   mutate($, s => ({ ...s, isOpen: true, query, hits: hitsFor(query), current: -1 }), true)
 
-// Prompt style: typing a query selects its first hit at once, as Enter
-// would.  The engine lets no scroll answer typing, only a press of the next
+// Prompt style: a query typed and left alone for a moment selects its first
+// hit, as Enter would.  (Not on every keystroke: a jump per letter, each
+// redrawing the chat, makes typing lag.)  The engine lets no scroll answer typing, only a press of the next
 // button, so kitty is asked to send that button's chord, and asked again if
 // no hit has been selected a moment later (a press can be lost while the
 // hint line is being redrawn).  Each query change and close takes a new
 // ticket, which calls off the one before and cuts short a step's wait.
 let ticket = 0
+const SETTLE_MS = 250
 
 const selectFirst = async ($: EngineInterface) => {
   const mine = ++ticket
   if (style !== 'prompt' || !kittyWindow) return
+  await $.clock.sleep(SETTLE_MS)
   const isWanted = () => mine === ticket && live.isOpen && live.hits.length > 0 && live.current < 0
   for (let attempt = 0; attempt < 3; attempt++) {
     // Let a step still on its way finish first.
