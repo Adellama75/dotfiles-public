@@ -18,6 +18,9 @@
 #                               ~/.config/tmux-prune/keep, so it still holds
 #                               after the session is killed and made again, or
 #                               restored after a reboot. A rename drops it.
+#                               A kept session is also a background one:
+#                               cumin-reopen opens no kitty window for it
+#                               after a lavender reboot (reach it with `t`).
 #   tmux-prune --unkeep [name]  prune it again as usual.
 #   tmux-prune --kept           list the kept names.
 #   Kills are logged to the journal: journalctl -t tmux-prune
