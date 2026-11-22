@@ -12,7 +12,7 @@ export CLAUDE_CODE_TMUX_TRUECOLOR=1
 # when a function is defined, so a later alias would leave `cc` meaning the compiler.
 alias cc='claude --dangerously-skip-permissions'   # bare `q` quits via ~/.claude/hooks/q-quit.sh
 alias cx='codex --dangerously-bypass-approvals-and-sandbox'
-alias gc='gemini'
+alias gc='agy --dangerously-skip-permissions'
 
 # --- let unmatched globs (e.g. "file?") pass through literally instead of erroring,
 #     so command_not_found_handler can route them to claude ---
