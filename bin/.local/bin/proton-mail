@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+"""proton-mail: send email from the Proton account through Proton Mail Bridge.
+
+Bridge runs on cumin (systemd user unit proton-bridge) and serves SMTP on
+127.0.0.1:1025 and IMAP on 127.0.0.1:1143. Its generated login lives in
+`pass show proton-bridge` on cumin: line 1 the Bridge password, line 2 the
+address. On any other machine the finished message is piped to
+`ssh cumin proton-mail --send-raw`, so attachments are read locally.
+
+  proton-mail --to a@b.c --subject "Hi" --body "Hello" [--cc x] [--bcc y]
+              [--body-file f] [--attach file]... [--reply-to-subject TEXT]
+              [--in-reply-to '<id>'] [--dry-run]
+  proton-mail --find TEXT      # Message-ID/From/Subject/Date of inbox mail whose subject contains TEXT
+
+--reply-to-subject looks the original up over IMAP and threads the reply to it.
+"""
+import argparse, email, email.policy, imaplib, json, mimetypes, os, shlex, smtplib, socket, ssl, subprocess, sys
+from email.message import EmailMessage
+from email.utils import formatdate, getaddresses, make_msgid
+
+HOST, SMTP_PORT, IMAP_PORT, REMOTE = "127.0.0.1", 1025, 1143, "cumin"
+
+
+def bridge_here():
+    try:
+        socket.create_connection((HOST, SMTP_PORT), timeout=1).close()
+        return True
+    except OSError:
+        return False
+
+
+def creds():
+    out = subprocess.run(["pass", "show", "proton-bridge"], capture_output=True, text=True)
+    if out.returncode:
+        sys.exit("proton-mail: no `pass show proton-bridge` entry: " + out.stderr.strip())
+    lines = [l.strip() for l in out.stdout.splitlines() if l.strip()]
+    return lines[1], lines[0]  # address, bridge password
+
+
+def tls():
+    # Bridge uses a self-signed certificate; the connection never leaves loopback.
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
+def remote(args, stdin=None):
+    r = subprocess.run(["ssh", REMOTE, "~/.local/bin/proton-mail", *map(shlex.quote, args)], input=stdin, capture_output=True)
+    sys.stdout.write(r.stdout.decode())
+    sys.stderr.write(r.stderr.decode())
+    if r.returncode:
+        sys.exit(r.returncode)
+    return r.stdout.decode()
+
+
+def find(text):
+    """Newest-first list of inbox messages whose subject contains text."""
+    if not bridge_here():
+        r = subprocess.run(["ssh", REMOTE, "~/.local/bin/proton-mail", "--find", shlex.quote(text), "--json"],
+                           capture_output=True, text=True)
+        if r.returncode:
+            sys.exit(r.stderr.strip() or "proton-mail: remote lookup failed")
+        return json.loads(r.stdout)
+    user, pw = creds()
+    m = imaplib.IMAP4(HOST, IMAP_PORT)
+    m.starttls(tls())
+    m.login(user, pw)
+    hits = []
+    for box in ("INBOX", '"All Mail"'):
+        if m.select(box, readonly=True)[0] != "OK":
+            continue
+        m.literal = text.encode()
+        typ, data = m.uid("SEARCH", "CHARSET", "UTF-8", "SUBJECT")
+        for uid in reversed(data[0].split()[-10:]):
+            typ, d = m.uid("FETCH", uid, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID REFERENCES FROM SUBJECT DATE)])")
+            h = email.message_from_bytes(d[0][1], policy=email.policy.default)
+            hits.append({k: str(h.get(k, "")).strip() for k in ("Message-ID", "References", "From", "Subject", "Date")})
+        if hits:
+            break
+    m.logout()
+    return hits
+
+
+def send_raw(raw, rcpts):
+    user, pw = creds()
+    with smtplib.SMTP(HOST, SMTP_PORT, timeout=60) as s:
+        s.starttls(context=tls())
+        s.login(user, pw)
+        s.sendmail(user, rcpts, raw)
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--to", action="append", default=[])
+    p.add_argument("--cc", action="append", default=[])
+    p.add_argument("--bcc", action="append", default=[])
+    p.add_argument("--subject", default="")
+    p.add_argument("--body")
+    p.add_argument("--body-file")
+    p.add_argument("--attach", action="append", default=[])
+    p.add_argument("--in-reply-to")
+    p.add_argument("--references")
+    p.add_argument("--reply-to-subject")
+    p.add_argument("--from", dest="sender", help="address to send as (default: the Bridge account)")
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--find")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--send-raw", action="store_true", help=argparse.SUPPRESS)
+    p.add_argument("--rcpt", action="append", default=[], help=argparse.SUPPRESS)
+    p.add_argument("--whoami", action="store_true", help=argparse.SUPPRESS)
+    a = p.parse_args()
+
+    if a.whoami:
+        print(creds()[0])
+        return
+    if a.find:
+        hits = find(a.find)
+        if a.json:
+            print(json.dumps(hits))
+        else:
+            for h in hits:
+                print(f'{h["Date"]}\n  {h["From"]}\n  {h["Subject"]}\n  {h["Message-ID"]}')
+            if not hits:
+                sys.exit("no match")
+        return
+    if a.send_raw:
+        send_raw(sys.stdin.buffer.read(), a.rcpt)
+        print("sent to " + ", ".join(a.rcpt))
+        return
+
+    if not a.to:
+        p.error("--to is required")
+    body = open(a.body_file).read() if a.body_file else (a.body or "")
+    local = bridge_here()
+    sender = a.sender or (creds()[0] if local else
+                          subprocess.run(["ssh", REMOTE, "~/.local/bin/proton-mail", "--whoami"],
+                                         capture_output=True, text=True).stdout.strip())
+    if not sender:
+        sys.exit("proton-mail: could not work out the sender address (is Bridge running on cumin?)")
+
+    if a.reply_to_subject:
+        hits = find(a.reply_to_subject)
+        if not hits:
+            sys.exit(f"proton-mail: no inbox message with subject containing {a.reply_to_subject!r}")
+        orig = hits[0]
+        a.in_reply_to = orig["Message-ID"]
+        a.references = (orig["References"] + " " + orig["Message-ID"]).strip()
+        if not a.subject:
+            s = orig["Subject"]
+            a.subject = s if s.lower().startswith("re:") else "Re: " + s
+
+    msg = EmailMessage()
+    msg["From"] = sender
+    msg["To"] = ", ".join(a.to)
+    if a.cc:
+        msg["Cc"] = ", ".join(a.cc)
+    msg["Subject"] = a.subject
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = make_msgid(domain=sender.split("@")[-1])
+    if a.in_reply_to:
+        msg["In-Reply-To"] = a.in_reply_to
+        msg["References"] = a.references or a.in_reply_to
+    msg.set_content(body)
+    for path in a.attach:
+        ctype = mimetypes.guess_type(path)[0] or "application/octet-stream"
+        maintype, subtype = ctype.split("/", 1)
+        with open(path, "rb") as f:
+            msg.add_attachment(f.read(), maintype=maintype, subtype=subtype, filename=os.path.basename(path))
+
+    rcpts = [addr for _, addr in getaddresses(a.to + a.cc + a.bcc)]
+    if a.dry_run:
+        print(f"From: {sender}\nTo: {msg['To']}\nCc: {msg.get('Cc', '')}\nBcc: {', '.join(a.bcc)}\n"
+              f"Subject: {a.subject}\nIn-Reply-To: {a.in_reply_to or ''}\n"
+              f"Attachments: {', '.join(os.path.basename(x) for x in a.attach)}\n\n{body}")
+        return
+    raw = msg.as_bytes(policy=email.policy.SMTP)
+    if local:
+        send_raw(raw, rcpts)
+        print("sent to " + ", ".join(rcpts))
+    else:
+        remote(["--send-raw"] + [x for r in rcpts for x in ("--rcpt", r)], stdin=raw)
+
+
+if __name__ == "__main__":
+    main()
