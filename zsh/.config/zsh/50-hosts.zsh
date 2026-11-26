@@ -26,6 +26,25 @@ for _h in $SSH_HOSTS; do
 done
 unset _h
 
+# doe with no arguments: through D:\cc\tools\ptyrelay.py on doe instead of sshd's console layer, which drops
+# dim text (Windows 10 conhost). ssh -T + a raw terminal; the last word picks the shell there:
+# ada-pwsh (default) or ada-bash, both with q/l/la/ll/cl/ts. One-off switch: `DOE_SHELL=ada-bash doe`.
+# `doe <cmd>`, `cd doe` and plain `ssh doe` are unchanged. Old way if the relay misbehaves: `command ssh doe`.
+# Added by Claude on doe at Ada's ask, 16 Nov 2026.
+doe() {
+  if (( $# )); then
+    if [[ -t 0 && -t 1 ]]; then command ssh -t doe "$@"; else command ssh doe "$@"; fi
+  elif [[ -t 0 && -t 1 ]]; then
+    local s=$(stty -g)
+    stty raw -echo
+    command ssh -T doe "python -I D:/cc/tools/ptyrelay.py $COLUMNS $LINES ${DOE_SHELL:-ada-pwsh}"
+    stty "$s"
+    printf '\e[?2048l'
+  else
+    command ssh doe
+  fi
+}
+
 # ...and the other order for fun: `hyfetch cumin` (plain `hyfetch` stays local)
 hyfetch() {
   if [[ $# -ge 1 && ${SSH_HOSTS[(Ie)$1]} -gt 0 ]]; then
