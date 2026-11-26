@@ -10,7 +10,21 @@ export CLAUDE_CODE_TMUX_TRUECOLOR=1
 # never reach make, scripts or `sh -c`, which find /usr/bin/cc via PATH.
 # Must be defined BEFORE command_not_found_handler below: zsh expands aliases
 # when a function is defined, so a later alias would leave `cc` meaning the compiler.
-alias cc='claude --dangerously-skip-permissions'   # bare `q` quits via ~/.claude/hooks/q-quit.sh
+#
+# cc is a function so it can boost startup on power-saver: Claude Code's startup is a
+# ~1 s CPU burst, and power-saver (amd-pstate EPP "power") runs it at half speed
+# (lavender 26 Nov 2026: 1.1 s to the prompt vs 0.5 s balanced; with this boost 0.66 s).
+# The performance hold lasts as long as `sleep 3`, then power-saver comes back by itself.
+# Only fires when EPP is "power", so cumin (always performance) never pays for it.
+# `function cc` + unalias: the name must not alias-expand when this file is re-sourced.
+unalias cc 2>/dev/null
+function cc {
+  local epp=/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference
+  if [[ -r $epp && "$(<$epp)" == power ]] && (( $+commands[powerprofilesctl] )); then
+    powerprofilesctl launch -p performance -r "claude startup" sleep 3 &>/dev/null &!
+  fi
+  claude --dangerously-skip-permissions "$@"   # bare `q` quits via ~/.claude/hooks/q-quit.sh
+}
 alias cx='codex --dangerously-bypass-approvals-and-sandbox'
 alias gc='agy --dangerously-skip-permissions'
 
